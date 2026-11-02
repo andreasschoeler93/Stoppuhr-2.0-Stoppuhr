@@ -1,6 +1,6 @@
 # ----------------------------------------
 # Stoppuhr Webserver
-# Version: v0.22.0
+# Version: v0.23.0
 # Status: stable-beta
 # ----------------------------------------
 
@@ -40,7 +40,7 @@ import wifi_config
 from xml_writer import create_xml_heats
 
 
-APP_VERSION: Final[str] = "0.22.0"
+APP_VERSION: Final[str] = "0.23.0"
 DEFAULT_PORT: Final[int] = 1999  # Since JAuswertung expected this port
 EXIT_ERROR: Final[int] = 1
 STATE_KEY: Final[str] = "STATE"
@@ -524,6 +524,12 @@ def api_get_settings() -> ResponseReturnValue:
     return jsonify(st.get("settings", {}))
 
 
+@app.get("/api/client-ip")
+def api_client_ip() -> ResponseReturnValue:
+    """IP-Adresse der direkten Verbindung, nicht eines ungeprueften Forwarded-Headers."""
+    return jsonify({"ip": request.remote_addr or ""})
+
+
 @app.post("/api/settings")
 def api_set_settings() -> ResponseReturnValue:
     st = load_state()
@@ -705,6 +711,7 @@ def _archive_competition(st: State, name: str) -> str:
             str(t["mac"]): vitals_history.history(redis_store, str(t["mac"]), since) for t in tasters if t["mac"]
         },
         "pi": {n: vitals_history.history_pi(redis_store, n, since) for n in ("Koffer-Pi", "Bad-Pi", "Pi")},
+        "charger": vitals_history.history_charger(redis_store, since),
         "starts": vitals_history.starts(redis_store, since),
         "raw": {
             key: st.get(key)
@@ -1043,9 +1050,20 @@ def api_post_charger():
     # Der Server-Zeitstempel zaehlt, die Platine hat keine Uhr
     status["ts"] = now_ms()
     ladekoffer.save(redis_store, status)
-    st = load_state()
-    reply: dict[str, Any] = {"ok": True, "wake": _wake_config(st), "beep": _beep_config(st)}
-    ota = charger_firmware.offer(redis_store, str(status.get("fw") or ""))
+    vitals_history.add_charger(redis_store, status["ts"], status)
+    try:
+        st = load_state()
+        reply: dict[str, Any] = {"ok": True, "wake": _wake_config(st), "beep": _beep_config(st)}
+        ota = charger_firmware.offer(redis_store, str(status.get("fw") or ""))
+    except redis.RedisError:
+        logger.warning("Redis nicht erreichbar; Ladekoffer-Status wird nur im Arbeitsspeicher gehalten")
+        st = _default_state()
+        reply = {
+            "ok": True,
+            "wake": _wake_config(st),
+            "beep": {"yellow_on": 0, "yellow_seq": 0, "red_on": 0, "red_ms": 2000, "red_every_ms": 10000},
+        }
+        ota = None
     if ota:
         reply["ota"] = ota
     return jsonify(reply)
@@ -1210,7 +1228,8 @@ def api_vitals_pi():
             "points": _thin(vitals_history.history_pi(redis_store, name, since)),
         })
     return jsonify({"fields": list(vitals_history.PI_FIELDS), "nodes": nodes,
-                    "starts": vitals_history.starts(redis_store, since)})
+                    "starts": vitals_history.starts(redis_store, since),
+                    "charger": vitals_history.history_charger(redis_store, since)})
 
 
 def _pi_name(node: dict[str, Any]) -> str:

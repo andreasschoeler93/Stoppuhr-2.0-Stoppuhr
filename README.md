@@ -1,4 +1,4 @@
-# Stoppuhr – Pi-Software (v0.22.0)
+# Stoppuhr – Pi-Software (v0.23.0)
 
 Webbasierte Wettkampf-Stoppuhr: ESP32-Taster messen die Zeit, der Raspberry Pi sammelt, wertet aus und
 liefert die Ergebnisse an JAuswertung. Die Taster-Firmware liegt im Repository `Taster`.
@@ -12,12 +12,13 @@ Versionsverlauf: [CHANGELOG.md](CHANGELOG.md). Zwei-Pi-Betrieb (Koffer und Bad):
 
 - Startkarten-Import (manuell), dynamische Bahnanzahl, Drag & Drop der Taster auf Bahnen und Starter
 - Start, Stopp, automatisch nächster Lauf, Abbruch und Wiederholung eines Laufs
-- Taster tauschen über „Bereitschaft“, Systemstatus, Zwei-Pi-Betrieb mit Ausfallübernahme
+- Taster tauschen über „Bereitschaft“, Vitaldaten mit darunterliegendem Systemstatus, Zwei-Pi-Betrieb mit Ausfallübernahme
 - Anmeldung für die Oberfläche, WLAN-Daten und Updates (Pi und Taster) aus der Oberfläche
-- Tab „Vitaldaten“ (ab v0.9.0): je ein Diagramm für Akku, Akkuspannung, Temperatur, Luftfeuchte und WLAN-Stärke mit allen Tastern in eigenen Farben (letzte 15/30 Minuten, 1/3/6 Stunden). Senkrechte gestrichelte Linien „L<Nr>“ markieren jeden Laufstart.
-  Die Werte kommen aus den ohnehin alle 10 s gesendeten Vitaldaten (kein Mehraufwand am Taster) und liegen in Redis (`VITALS_HIST:<MAC>`, höchstens 6 Stunden).
+- Tab „Vitaldaten“ (ab v0.9.0): je ein Diagramm für Akku, Akkuspannung, Temperatur, Luftfeuchte und WLAN-Stärke mit allen Tastern in eigenen Farben (Zeitfenster bis 48 Stunden). Senkrechte gestrichelte Linien „L<Nr>“ markieren jeden Laufstart.
+  Die Werte kommen aus den ohnehin alle 10 s gesendeten Vitaldaten (kein Mehraufwand am Taster) und liegen in Redis (`VITALS_HIST:<MAC>`, höchstens 48 Stunden).
   Schnittstelle: `GET /api/vitals/history?mac=…&hours=…`.
 - Ladekoffer (ab v0.12.0): Die Ladeplatine (Projekt `Ladekoffer`) sendet alle 5 s per `POST /api/charger` (JSON) Ladezustand der 10 Plätze, Temperatur, Luftfeuchte und Ampel. Der Pi wertet daraus Statusmeldungen aus (Kopfzeile, Meldungen oben, Tabelle im Tab „Vitaldaten“). Nach 30 s ohne Meldung gilt der Ladekoffer als offline. `GET /api/charger` liefert den ausgewerteten Zustand. Die Taster sind davon nicht betroffen.
+- Die Oberfläche hat vier Seiten: **Stoppuhr**, **Vitaldaten** (inklusive Systemstatus), **Archiv** und **Einstellungen**. JAuswertung-Startkarten werden in den Einstellungen geladen; dort kann die IP des aufrufenden Geräts übernommen werden. Koffer-Temperatur und -Luftfeuchte sind ebenfalls als Verlauf sichtbar.
 
 ## Installation
 
@@ -74,7 +75,7 @@ Taster, die in dieser Zeit nicht verbunden sind, empfangen ihn nicht. Buchstaben
 ### Abbruch und Wiederholung
 
 Ein langer Druck (2 s) am Starter bricht den Versuch ab (dreimal langes Piepen) und bereitet die nächste Version desselben Laufs vor.
-Die Stopp-Sperre beginnt mit dem Abbruch. Über **Versuch vorbereiten** geht das auch in der Oberfläche.
+Die Stopp-Sperre beginnt mit dem Abbruch. Über **Laufvorwahl** geht das auch in der Oberfläche.
 Gespeicherte Zeiten bleiben; Versionen werden getrennt nummeriert (z. B. `5/2`) und im XML-Export als eigener Heat ausgegeben.
 
 ### Taster-Anzeige

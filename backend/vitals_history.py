@@ -12,6 +12,9 @@ MAX_POINTS: Final[int] = KEEP_HOURS * 360 + 60
 FIELDS: Final[tuple[str, ...]] = ("battery", "vbat", "temp", "humidity", "rssi")
 PI_PREFIX: Final[str] = "PI_HIST:"
 PI_FIELDS: Final[tuple[str, ...]] = ("cpu_temp", "cpu_percent", "mem_percent")
+CHARGER_KEY: Final[str] = "CHARGER_HIST"
+CHARGER_FIELDS: Final[tuple[str, ...]] = ("temp", "humidity")
+CHARGER_MAX_POINTS: Final[int] = KEEP_HOURS * 720 + 120
 
 
 def _num(value: Any) -> float | None:
@@ -104,6 +107,34 @@ def history_pi(r: Any, name: str, since_ms: int = 0) -> list[list[Any]]:
             continue
         if isinstance(p, list) and len(p) == len(PI_FIELDS) + 1 and p[0] >= since_ms:
             points.append(p)
+    return points
+
+
+def add_charger(r: Any, ts_ms: int, status: dict[str, Any]) -> None:
+    """Messpunkt der Ladekoffer-Sensoren (Temperatur und Luftfeuchte)."""
+    try:
+        point = [ts_ms] + [_num(status.get(f)) for f in CHARGER_FIELDS]
+        pipe = r.pipeline()
+        pipe.rpush(CHARGER_KEY, json.dumps(point, separators=(",", ":")))
+        pipe.ltrim(CHARGER_KEY, -CHARGER_MAX_POINTS, -1)
+        pipe.execute()
+    except Exception:  # noqa: BLE001
+        pass
+
+
+def history_charger(r: Any, since_ms: int = 0) -> list[list[Any]]:
+    try:
+        raw = r.lrange(CHARGER_KEY, 0, -1)
+    except Exception:  # noqa: BLE001
+        return []
+    points: list[list[Any]] = []
+    for item in raw:
+        try:
+            point = json.loads(item)
+        except ValueError:
+            continue
+        if isinstance(point, list) and len(point) == len(CHARGER_FIELDS) + 1 and point[0] >= since_ms:
+            points.append(point)
     return points
 
 

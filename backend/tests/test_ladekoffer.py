@@ -4,21 +4,40 @@ from unittest.mock import patch
 
 import app as stopwatch
 import ladekoffer
+import redis
+import vitals_history
 
 
 class FakeRedis:
     def __init__(self, fail=False):
         self.data = {}
+        self.lists = {}
         self.fail = fail
+
+    def pipeline(self):
+        return self
+
+    def rpush(self, key, value):
+        self.lists.setdefault(key, []).append(value)
+
+    def ltrim(self, key, start, end):
+        if start < 0:
+            self.lists[key] = self.lists.get(key, [])[start:]
+
+    def execute(self):
+        return []
+
+    def lrange(self, key, start, end):
+        return list(self.lists.get(key, []))
 
     def set(self, key, value):
         if self.fail:
-            raise RuntimeError("READONLY")
+            raise redis.RedisError("READONLY")
         self.data[key] = value
 
     def get(self, key):
         if self.fail:
-            raise RuntimeError("down")
+            raise redis.RedisError("down")
         return self.data.get(key)
 
 
@@ -122,6 +141,10 @@ class EndpointTests(unittest.TestCase):
         self.assertTrue(body["known"] and body["online"])
         self.assertEqual(body["state"], "bereit")
         self.assertLess(abs(body["status"]["ts"] - int(time.time() * 1000)), 5000)
+        self.assertEqual(
+            vitals_history.history_charger(self.redis),
+            [[body["status"]["ts"], 24.5, 40.0]],
+        )
 
     def test_invalid_payload(self):
         self.assertEqual(self.client.post("/api/charger", json={"x": 1}).status_code, 400)

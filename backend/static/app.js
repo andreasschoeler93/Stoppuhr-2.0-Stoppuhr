@@ -1,4 +1,4 @@
-/* Stoppuhr v0.4.2 – UI Logic (Startkarten: manuelles Laden, Bahnen dynamisch) */
+/* Stoppuhr – UI Logic */
 
 function byId(id) { return document.getElementById(id); }
 
@@ -30,7 +30,7 @@ const VITAL_CHARTS = [
   { idx: 1, title: "Akku", unit: "%", color: "#198754", min: 0, max: 100 },
   { idx: 2, title: "Akkuspannung", unit: "V", color: "#0d6efd", decimals: 2 },
   { idx: 3, title: "Temperatur", unit: "°C", color: "#dc3545", decimals: 1 },
-  { idx: 4, title: "Luftfeuchte", unit: "%", color: "#0dcaf0", decimals: 0 },
+  { idx: 4, title: "Luftfeuchte", unit: "%", color: "#0dcaf0", decimals: 0, min: 0, max: 100 },
   { idx: 5, title: "WLAN-Stärke", unit: "dBm", color: "#6f42c1", decimals: 0 },
 ];
 // Pi-Diagramme: idx zeigt auf die Spalte im Pi-Messpunkt [ts, CPU-Temperatur, CPU-Last, Speicher]
@@ -39,6 +39,7 @@ const PI_CHARTS = [
 ];
 const PI_COLORS = { "Koffer-Pi": "#0d6efd", "Bad-Pi": "#fd7e14", "Pi": "#0d6efd" };
 let vitalsData = null;
+let chargerSeries = [];
 const TASTER_COLORS = ["#0d6efd", "#dc3545", "#198754", "#fd7e14", "#6f42c1", "#0dcaf0", "#d63384", "#795548", "#6c757d", "#20c997"];
 
 let vitalsEnd = null;      // Ende des Zeitfensters in ms; null = jetzt (live)
@@ -79,7 +80,10 @@ function buildArchiveVitals(a) {
     label: `Taster ${t.letter || "?"}`, color: TASTER_COLORS[i % TASTER_COLORS.length], points: (a.vitals || {})[t.mac] || [],
   }));
   const piSeries = Object.entries(a.pi || {}).map(([n, pts]) => ({ label: n, color: PI_COLORS[n] || "#0d6efd", points: pts }));
-  const stamps = series.concat(piSeries).flatMap(s => s.points.map(p => p[0]));
+  chargerSeries = a.charger?.length
+    ? [{ label: "Ladekoffer", color: "#20a4a8", points: a.charger.map(([ts, temp, humidity]) => [ts, null, null, temp, humidity, null]) }]
+    : [];
+  const stamps = series.concat(piSeries, chargerSeries).flatMap(s => s.points.map(p => p[0]));
   const first = stamps.length ? Math.min(...stamps) : (a.since_ts || a.ended_ts);
   vitalsArchive = { id: a.id, name: a.name, ended_ts: a.ended_ts, first_ts: first, series, piSeries, starts: a.starts || [] };
   vitalsEnd = null;
@@ -119,6 +123,9 @@ async function refreshVitals() {
   const piNodes = pi.nodes || [];
   await refreshCharger().catch(() => {});
   const piSeries = piNodes.map(n => ({ label: n.name, color: PI_COLORS[n.name] || "#0d6efd", points: n.points || [] }));
+  chargerSeries = pi.charger?.length
+    ? [{ label: "Ladekoffer", color: "#20a4a8", points: pi.charger.map(([ts, temp, humidity]) => [ts, null, null, temp, humidity, null]) }]
+    : [];
   vitalsData = { hours, t1: vitalsEnd, series, starts: starts || [], tasters: list, piNodes, piSeries };
   byId("vitalsRange").textContent = vitalsEnd ? vitalsRangeText(t1, win) : "";
   drawVitals();
@@ -501,7 +508,8 @@ function drawVitals() {
   const s = vitalsData.series;
   const legend = x => `<span class="me-3"><span style="display:inline-block;width:12px;height:12px;border-radius:2px;background:${x.color};vertical-align:-1px"></span> ${escapeHtml(x.label)}</span>`;
   byId("vitalsInfo").innerHTML = (s.length ? s.map(legend).join("") : "Noch kein Taster angemeldet.")
-    + (vitalsData.piSeries.length ? ' <span class="text-muted me-2">|</span>' + vitalsData.piSeries.map(legend).join("") : "");
+    + (vitalsData.piSeries.length ? ' <span class="text-muted me-2">|</span>' + vitalsData.piSeries.map(legend).join("") : "")
+    + (chargerSeries.length ? ' <span class="text-muted me-2">|</span>' + chargerSeries.map(legend).join("") : "");
   if (!box.children.length) {
     box.innerHTML = VITAL_CHARTS.concat(PI_CHARTS).map(c => `<div class="col-lg-6"><div class="card"><div class="card-body p-2">
       <strong class="small">${c.title} (${c.unit})</strong>
@@ -527,7 +535,7 @@ function drawVitalChart(c, series) {
   g.clearRect(0, 0, w, h);
   const cols = c.idx2 ? [[c.idx, false], [c.idx2, true]] : [[c.idx, false]];
   const t1 = vitalsData.t1 ?? Date.now(), t0 = t1 - vitalsData.hours * 3600 * 1000;
-  const lines = cols.flatMap(([ci, dash]) => series.map(s => ({
+  const lines = cols.flatMap(([ci, dash]) => (ci === 3 || ci === 4 ? series.concat(chargerSeries) : series).map(s => ({
     dash, color: s.color,
     data: s.points.filter(p => p[ci] !== null && p[0] >= t0 && p[0] <= t1).map(p => [p[0], p[ci]]),
   })));
@@ -834,12 +842,25 @@ async function deployPi() {
 // -----------------------------
 // Settings / Startcards
 // -----------------------------
+let clientIp = "";
+
+async function loadClientIp() {
+  const result = await apiGet("/api/client-ip");
+  clientIp = result.ip || "";
+  byId("clientIpValue").textContent = clientIp || "nicht ermittelbar";
+  if (!clientIp) throw new Error("Der Server hat keine Client-IP gemeldet.");
+}
+
+function showClientIpError(message) {
+  const error = byId("clientIpError");
+  error.textContent = message;
+  error.classList.toggle("d-none", !message);
+}
+
 async function loadSettingsIntoUI() {
   const s = await apiGet("/api/settings");
-  byId("baseUrlInput").value = s.startcards_base_url || "";
   byId("baseUrlInputSettings").value = s.startcards_base_url || "";
   byId("suffixInput").value = s.startcards_suffix || "/export/CSV/Startkarten.csv";
-  byId("suffixDisplay").value = byId("suffixInput").value;
   byId("autoNextInput").value = s.auto_next_run_s ?? "10";
   byId("stopLockoutInput").value = s.stop_lockout_s ?? "5";
   byId("shutdownGraceInput").value = s.shutdown_grace_s ?? "10";
@@ -1575,6 +1596,7 @@ async function init() {
 
   await loadSettingsIntoUI();
   await loadStartcardsFromBackend().catch(() => updateStartcardsStatusLine());
+  loadClientIp().catch(e => showClientIpError(e.message));
 
   byId("laufSelect").addEventListener("change", (e) => {
     currentRun = e.target.value;
@@ -1599,9 +1621,10 @@ async function init() {
   });
 
   byId("btnReloadStartcards").addEventListener("click", async () => {
-    const baseUrl = byId("baseUrlInput").value.trim();
-    const suffix = byId("suffixDisplay").value.trim();
+    const baseUrl = byId("baseUrlInputSettings").value.trim();
+    const suffix = byId("suffixInput").value.trim();
     byId("startcardsStatus").textContent = "Status: lade Startkarten…";
+    byId("startcardsStatus").classList.remove("text-danger");
     try {
       await apiPost("/api/startcards/reload", { base_url: baseUrl, suffix: suffix });
       await loadSettingsIntoUI();
@@ -1610,6 +1633,46 @@ async function init() {
       byId("startcardsStatus").textContent = "Status: Fehler: " + e.message;
       byId("startcardsStatus").classList.add("text-danger");
     }
+  });
+
+  byId("btnSaveStartcardsSettings").addEventListener("click", async () => {
+    try {
+      await apiPost("/api/settings", {
+        startcards_base_url: byId("baseUrlInputSettings").value.trim(),
+        startcards_suffix: byId("suffixInput").value.trim()
+      });
+      byId("startcardsStatus").textContent = "Startkarten-Adresse gespeichert.";
+      byId("startcardsStatus").classList.remove("text-danger");
+    } catch (e) {
+      byId("startcardsStatus").textContent = "Speichern fehlgeschlagen: " + e.message;
+      byId("startcardsStatus").classList.add("text-danger");
+    }
+  });
+
+  byId("btnUseClientIp").addEventListener("click", () => {
+    if (!clientIp) {
+      showClientIpError("Die IP-Adresse ist noch nicht verfügbar.");
+      return;
+    }
+    const input = byId("baseUrlInputSettings");
+    const current = input.value.trim();
+    let protocol = "http:";
+    let port = "";
+    if (current) {
+      try {
+        const url = new URL(current.includes("://") ? current : `http://${current}`);
+        protocol = url.protocol;
+        const authority = current.replace(/^https?:\/\//i, "").split(/[/?#]/, 1)[0];
+        const explicitPort = authority.match(/^\[[^\]]+\]:(\d+)$/) || authority.match(/^[^:]+:(\d+)$/);
+        port = explicitPort ? explicitPort[1] : url.port;
+      } catch {
+        showClientIpError("Die vorhandene Basis-URL ist ungültig. Bitte Port und Adresse prüfen.");
+        return;
+      }
+    }
+    const host = clientIp.includes(":") && !clientIp.startsWith("[") ? `[${clientIp}]` : clientIp;
+    input.value = `${protocol}//${host}${port ? ":" + port : ""}`;
+    showClientIpError("");
   });
 
   byId("starterIsFinishQuick").addEventListener("change", async ev => {
@@ -1731,6 +1794,7 @@ async function init() {
   byId("btnAccountSave").addEventListener("click", saveAccount);
   byId("btnLogout").addEventListener("click", logout);
   byId("vitals-tab").addEventListener("shown.bs.tab", () => refreshVitals().catch(() => {}));
+  byId("vitals-tab").addEventListener("shown.bs.tab", () => refreshSystemStatus().catch(() => {}));
   byId("vitalsHours").addEventListener("change", () => {
     if (vitalsEnd !== null) {
       const [lo, hi] = vitalsEndBounds();
@@ -1790,12 +1854,6 @@ async function init() {
     if (document.querySelector(".taster-card.dragging")) return;
     loadButtons().catch(() => {});
   }, 5000);
-  // keep suffix display in sync with settings input
-  byId("suffixInput").addEventListener("input", () => { byId("suffixDisplay").value = byId("suffixInput").value; });
-  byId("baseUrlInputSettings").addEventListener("input", () => { byId("baseUrlInput").value = byId("baseUrlInputSettings").value; });
-  byId("suffixDisplay").value = byId("suffixInput").value;
-  byId("baseUrlInput").addEventListener("input", () => { byId("baseUrlInputSettings").value = byId("baseUrlInput").value; });
-
   // Live-Ansicht des Exports (/legacy/heats.xml), wie ihn JAuswertung abholt
   let exportTimer = null;
   const fmtMs = ms => {

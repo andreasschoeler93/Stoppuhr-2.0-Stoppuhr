@@ -8,6 +8,8 @@
   <style>
     body { background-color: #f8f9fa; }
     .nav-tabs .nav-link.active { font-weight: 600; }
+    .settings-summary { cursor: pointer; font-weight: 600; padding: .7rem .9rem; border: 1px solid #dee2e6; border-radius: .375rem; background: #fff; }
+    details[open] > .settings-summary { margin-bottom: .5rem; }
     .taster-card { border-radius: .5rem; border: 1px solid #dee2e6; padding: .5rem .75rem; margin-bottom: .5rem; background:#fff; cursor: grab; }
     .taster-card.dragging { opacity: .6; }
     .taster-header { display:flex; justify-content:space-between; align-items:center; font-weight:600; font-size:.95rem; }
@@ -50,11 +52,6 @@
       </button>
     </li>
     <li class="nav-item" role="presentation">
-      <button class="nav-link" id="settings-tab" data-bs-toggle="tab" data-bs-target="#settings" type="button" role="tab">
-        Einstellungen
-      </button>
-    </li>
-    <li class="nav-item" role="presentation">
       <button class="nav-link" id="vitals-tab" data-bs-toggle="tab" data-bs-target="#vitals" type="button" role="tab">
         Vitaldaten
       </button>
@@ -65,8 +62,8 @@
       </button>
     </li>
     <li class="nav-item" role="presentation">
-      <button class="nav-link" id="status-tab" data-bs-toggle="tab" data-bs-target="#status" type="button" role="tab">
-        Systemstatus
+      <button class="nav-link" id="settings-tab" data-bs-toggle="tab" data-bs-target="#settings" type="button" role="tab">
+        Einstellungen
       </button>
     </li>
   </ul>
@@ -74,44 +71,15 @@
   <div class="tab-content">
     <!-- TAB: Stoppuhr -->
     <div class="tab-pane fade show active" id="home" role="tabpanel">
-      <!-- Verbindung -->
-      <div class="card mb-3">
-        <div class="card-body">
-          <h2 class="h6 mb-3">Verbindung zur Auswertungssoftware (Startkarten)</h2>
-          <div class="row g-3 align-items-end">
-            <div class="col-md-5">
-              <label class="form-label">Basis-URL (IP:Port, ohne Pfad)</label>
-              <input type="text" id="baseUrlInput" class="form-control" placeholder="192.168.178.33:8082">
-              <div class="form-text">Wird in den Einstellungen gespeichert.</div>
-            </div>
-            <div class="col-md-5">
-              <label class="form-label">Startkarten-Pfad</label>
-              <input type="text" id="suffixDisplay" class="form-control" disabled>
-              <div class="form-text">Änderbar im Tab <strong>Einstellungen</strong>.</div>
-            </div>
-            <div class="col-md-2 d-grid">
-              <button class="btn btn-outline-primary" id="btnReloadStartcards">Startkarten laden</button>
-            </div>
-          </div>
-          <div class="mt-2 text-muted small" id="startcardsStatus">Status: noch nicht geladen.</div>
-        </div>
-      </div>
-
       <!-- Lauf -->
       <div class="card mb-3">
-        <div class="card-body">
-          <h2 class="h6 mb-3">Lauf auswählen</h2>
-          <div class="row g-3 align-items-end">
-            <div class="col-md-3">
-              <label class="form-label">Aktueller Lauf</label>
-              <div class="input-group">
-                <select id="laufSelect" class="form-select"></select>
-                <button class="btn btn-primary" id="btnSetRun" type="button">Versuch vorbereiten</button>
-              </div>
-            </div>
-            <div class="col-md-9 text-muted small">
-              Hinweis: Die Anzahl der Bahnen wird aus den Startkarten über die höchste Bahn-Nummer ermittelt.
-              Leere Bahnen werden als <em>inaktiv</em> angezeigt, bleiben aber per Drag & Drop zuweisbar.
+        <div class="card-body py-2">
+          <div class="d-flex flex-wrap align-items-center justify-content-between gap-2">
+            <h2 class="h6 mb-0">Lauf wählen</h2>
+            <div class="d-flex align-items-center gap-2">
+              <label class="form-label mb-0" for="laufSelect">Lauf</label>
+              <select id="laufSelect" class="form-select form-select-sm" style="width:auto; min-width:10rem"></select>
+              <button class="btn btn-primary btn-sm text-nowrap" id="btnSetRun" type="button">Laufvorwahl</button>
             </div>
           </div>
         </div>
@@ -209,39 +177,41 @@
 
       <div class="card mb-3">
         <div class="card-body">
-          <div class="d-flex justify-content-between align-items-center mb-2">
-            <h2 class="h6 mb-0">Export für JAuswertung (live)</h2>
-            <button class="btn btn-outline-secondary btn-sm" type="button" id="btnToggleExport">Live-Ansicht öffnen</button>
-          </div>
-          <div id="exportView" class="d-none">
-            <div class="text-muted small mb-2" id="exportInfo"></div>
-            <div class="table-responsive" style="max-height: 320px; overflow:auto;">
-              <table class="table table-sm table-striped mb-2">
-                <thead><tr><th>Wettkampf</th><th>Lauf</th><th>Bahn</th><th>Zeit</th><th>ms</th></tr></thead>
-                <tbody id="exportRows"></tbody>
-              </table>
+          <h2 class="h6 mb-3">Startkarten aus JAuswertung</h2>
+          <div class="row g-3 align-items-end">
+            <div class="col-md-6">
+              <label class="form-label" for="baseUrlInputSettings">Basis-URL (IP:Port)</label>
+              <input type="text" id="baseUrlInputSettings" class="form-control" placeholder="192.168.178.33:8082">
             </div>
-            <details>
-              <summary class="small">Rohes XML</summary>
-              <pre class="small mb-0" style="max-height: 240px; overflow:auto;" id="exportRaw"></pre>
-            </details>
+            <div class="col-md-6">
+              <label class="form-label" for="suffixInput">Pfad / Dateiname</label>
+              <input type="text" id="suffixInput" class="form-control" value="/export/CSV/Startkarten.csv">
+              <div class="form-text">Typisch: <code>/export/CSV/Startkarten.csv</code></div>
+            </div>
+            <div class="col-12">
+              <div class="d-flex flex-wrap gap-2 align-items-center">
+                <span class="small">IP dieses aufrufenden Geräts: <strong id="clientIpValue">wird geladen …</strong></span>
+                <button class="btn btn-outline-secondary btn-sm" type="button" id="btnUseClientIp">Für Startkarten verwenden</button>
+                <span class="small text-danger d-none" id="clientIpError"></span>
+              </div>
+            </div>
+            <div class="col-12 d-flex flex-wrap gap-2 align-items-center">
+              <button class="btn btn-outline-primary btn-sm" type="button" id="btnSaveStartcardsSettings">Adresse speichern</button>
+              <button class="btn btn-primary btn-sm" type="button" id="btnReloadStartcards">Startkarten laden</button>
+              <span class="small text-muted" id="startcardsStatus">Status: noch nicht geladen.</span>
+            </div>
           </div>
         </div>
       </div>
 
-      <div class="card mb-3">
-        <div class="card-body">
-          <h2 class="h6 mb-3">Startkarten-Datei</h2>
+      <details class="mb-3">
+        <summary class="settings-summary">Experteneinstellungen</summary>
+        <div class="pt-3">
+          <details class="mb-3">
+            <summary class="settings-summary">Lauf- und Tasterverhalten</summary>
+            <div class="card mt-2">
+              <div class="card-body">
           <div class="row g-3 align-items-end">
-            <div class="col-md-6">
-              <label class="form-label">Basis-URL (IP:Port)</label>
-              <input type="text" id="baseUrlInputSettings" class="form-control" placeholder="192.168.178.33:8082">
-            </div>
-            <div class="col-md-6">
-              <label class="form-label">Pfad / Dateiname</label>
-              <input type="text" id="suffixInput" class="form-control" value="/export/CSV/Startkarten.csv">
-              <div class="form-text">Typisch: <code>/export/CSV/Startkarten.csv</code></div>
-            </div>
             <div class="col-md-6">
               <label class="form-label">Automatisch zum nächsten Lauf nach (Sekunden)</label>
               <input type="number" min="0" step="1" id="autoNextInput" class="form-control" value="10">
@@ -324,10 +294,12 @@
           </div>
         </div>
       </div>
+          </details>
 
-      <div class="card mb-3" id="limitsCard">
-        <div class="card-body">
-          <h2 class="h6 mb-2">Grenzwerte (Farben und Meldungen)</h2>
+          <details class="mb-3">
+            <summary class="settings-summary">Grenzwerte (Farben und Meldungen)</summary>
+            <div class="card mt-2" id="limitsCard">
+              <div class="card-body">
           <div class="form-text mb-2">Ab dem gelben Wert wird ein Messwert gelb, ab dem roten rot. Rote und gelbe Balken oben und die Hinterlegung bei Bahnen und Tastern richten sich danach.</div>
           <div class="table-responsive">
             <table class="table table-sm align-middle mb-2">
@@ -342,11 +314,13 @@
             <span class="text-danger small d-none" id="limitsError"></span>
           </div>
         </div>
-      </div>
+            </div>
+          </details>
 
-      <div class="card mb-3" id="wifiCard">
-        <div class="card-body">
-          <h2 class="h6 mb-2">WLAN-Netze</h2>
+          <details class="mb-3">
+            <summary class="settings-summary">WLAN-Netze</summary>
+            <div class="card mt-2" id="wifiCard">
+              <div class="card-body">
           <div class="row g-2">
             <div class="col-md-6">
               <label class="form-label" for="wifiSsid1">Koffer-WLAN (Name)</label>
@@ -369,11 +343,13 @@
           <div class="small mt-2" id="wifiStatus"></div>
           <div class="text-danger small d-none" id="wifiError"></div>
         </div>
-      </div>
+            </div>
+          </details>
 
-      <div class="card mb-3" id="accountCard">
-        <div class="card-body">
-          <h2 class="h6 mb-2">Zugang zur Oberfläche</h2>
+          <details class="mb-3">
+            <summary class="settings-summary">Zugang zur Oberfläche</summary>
+            <div class="card mt-2" id="accountCard">
+              <div class="card-body">
           <div class="small mb-2">Angemeldet als <strong id="accountUser">–</strong></div>
           <div class="row g-2">
             <div class="col-md-4"><input class="form-control" id="accCurrent" type="password" placeholder="Aktuelles Kennwort" autocomplete="current-password"></div>
@@ -386,9 +362,12 @@
           </div>
           <div class="text-danger small d-none" id="accountError"></div>
         </div>
-      </div>
+            </div>
+          </details>
 
-      <div class="card mb-3" id="piUpdateCard">
+          <details class="mb-3">
+            <summary class="settings-summary">Software und Firmware</summary>
+            <div class="card mt-2 mb-3" id="piUpdateCard">
         <div class="card-body">
           <h2 class="h6 mb-2">Pi-Software</h2>
           <div class="small mb-2">Läuft: <strong id="piCurrent">–</strong></div>
@@ -406,9 +385,9 @@
           <div class="text-danger small d-none" id="piError"></div>
           <div class="text-danger small d-none" id="piLocked">Der Wettkampf läuft bereits. Ein Wechsel ist nur mit ausdrücklicher Bestätigung möglich.</div>
         </div>
-      </div>
+            </div>
 
-      <div class="card mb-3" id="chargerFwCard">
+            <div class="card mb-3" id="chargerFwCard">
         <div class="card-body">
           <h2 class="h6 mb-2">Ladekoffer-Firmware</h2>
           <div class="small mb-2">Läuft: <strong id="chargerFwRunning">–</strong> · Bereitgestellt: <strong id="chargerFwUploaded">–</strong></div>
@@ -434,9 +413,9 @@
           </details>
           <div class="small d-none" id="chargerFwMsg"></div>
         </div>
-      </div>
+            </div>
 
-      <div class="card mb-3" id="firmwareCard">
+            <div class="card mb-3" id="firmwareCard">
         <div class="card-body">
           <h2 class="h6 mb-2">Taster-Firmware</h2>
           <div class="row g-2 align-items-end">
@@ -458,25 +437,52 @@
             <tbody id="fwTasters"></tbody>
           </table>
         </div>
-      </div>
+            </div>
+          </details>
 
-      <div class="card border-danger mb-3">
+          <details class="mb-3">
+            <summary class="settings-summary text-danger">Wettkampf beenden</summary>
+            <div class="card border-danger mt-2">
         <div class="card-body">
           <h2 class="h6 text-danger mb-2">Wettkampf beenden</h2>
           <p class="mb-2">Löscht Startkarten, Laufzeiten, Ergebnisse, Taster- und Bahnzuordnungen. Erreichbare Taster schalten sich aus; ihre Buchstaben werden beim nächsten Anmelden neu vergeben.</p>
           <button class="btn btn-danger btn-sm" id="btnEndCompetition">Wettkampf beenden und Taster ausschalten</button>
         </div>
-      </div>
+            </div>
+          </details>
 
-      <div class="card">
-        <div class="card-body">
-          <h2 class="h6 mb-2">Hinweis zur Robustheit</h2>
-          <div class="text-muted small">
-            Die Startkarten werden bewusst <strong>nicht automatisch</strong> neu geladen.
-            Nur über <em>„Startkarten laden“</em> oder nach Änderung der Einstellungen.
-          </div>
+          <details class="mb-3">
+            <summary class="settings-summary">JAuswertung: Live-Export und Hinweise</summary>
+            <div class="card mt-2 mb-3">
+              <div class="card-body">
+                <div class="d-flex justify-content-between align-items-center mb-2">
+                  <h2 class="h6 mb-0">Export für JAuswertung (live)</h2>
+                  <button class="btn btn-outline-secondary btn-sm" type="button" id="btnToggleExport">Live-Ansicht öffnen</button>
+                </div>
+                <div id="exportView" class="d-none">
+                  <div class="text-muted small mb-2" id="exportInfo"></div>
+                  <div class="table-responsive" style="max-height: 320px; overflow:auto;">
+                    <table class="table table-sm table-striped mb-2">
+                      <thead><tr><th>Wettkampf</th><th>Lauf</th><th>Bahn</th><th>Zeit</th><th>ms</th></tr></thead>
+                      <tbody id="exportRows"></tbody>
+                    </table>
+                  </div>
+                  <details>
+                    <summary class="small">Rohes XML</summary>
+                    <pre class="small mb-0" style="max-height: 240px; overflow:auto;" id="exportRaw"></pre>
+                  </details>
+                </div>
+              </div>
+            </div>
+            <div class="card mt-2">
+              <div class="card-body text-muted small">
+                Die Startkarten werden bewusst <strong>nicht automatisch</strong> neu geladen.
+                Nur über <em>„Startkarten laden“</em> oder nach Änderung der Einstellungen.
+              </div>
+            </div>
+          </details>
         </div>
-      </div>
+      </details>
     </div>
 
     <!-- TAB: Vitaldaten -->
@@ -504,6 +510,37 @@
         <span class="text-muted small" id="vitalsInfo"></span>
       </div>
       <div class="row g-3" id="vitalsCharts"></div>
+      <section id="status" class="mt-4">
+        <div class="d-flex justify-content-between align-items-center mb-2">
+          <h2 class="h6 mb-0">Systemstatus</h2>
+          <button class="btn btn-sm btn-outline-secondary" id="btnRefreshStatus">Aktualisieren</button>
+        </div>
+        <div class="text-muted small mb-2" id="statusLastRefresh">Letzte Aktualisierung: –</div>
+
+        <div class="card mb-3 d-none" id="clusterCard">
+          <div class="card-body">
+            <h3 class="h6">Zwei-Pi-Betrieb</h3>
+            <div class="mb-2" id="clusterSummary"></div>
+            <div class="row g-3" id="clusterNodes"></div>
+            <div class="small text-muted mt-2" id="clusterWifi"></div>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-body">
+            <div class="row g-2">
+              <div class="col-md-6"><strong>Hostname:</strong> <span id="sysHostname">–</span></div>
+              <div class="col-md-6"><strong>Uptime:</strong> <span id="sysUptime">–</span></div>
+              <div class="col-md-6"><strong>CPU:</strong> <span id="sysCpu">–</span></div>
+              <div class="col-md-6"><strong>RAM:</strong> <span id="sysMem">–</span></div>
+              <div class="col-md-6"><strong>Disk /:</strong> <span id="sysDisk">–</span></div>
+              <div class="col-md-6"><strong>Load:</strong> <span id="sysLoad">–</span></div>
+            </div>
+            <hr>
+            <div><strong>Dienst:</strong> <span id="svcStatus">–</span></div>
+          </div>
+        </div>
+      </section>
     </div>
 
     <!-- TAB: Archiv -->
@@ -513,38 +550,6 @@
       <div id="archiveDetail"></div>
     </div>
 
-    <!-- TAB: Systemstatus -->
-    <div class="tab-pane fade" id="status" role="tabpanel">
-      <div class="d-flex justify-content-between align-items-center mb-2">
-        <h2 class="h6 mb-0">Systemstatus</h2>
-        <button class="btn btn-sm btn-outline-secondary" id="btnRefreshStatus">Aktualisieren</button>
-      </div>
-      <div class="text-muted small mb-2" id="statusLastRefresh">Letzte Aktualisierung: –</div>
-
-      <div class="card mb-3 d-none" id="clusterCard">
-        <div class="card-body">
-          <h3 class="h6">Zwei-Pi-Betrieb</h3>
-          <div class="mb-2" id="clusterSummary"></div>
-          <div class="row g-3" id="clusterNodes"></div>
-          <div class="small text-muted mt-2" id="clusterWifi"></div>
-        </div>
-      </div>
-
-      <div class="card">
-        <div class="card-body">
-          <div class="row g-2">
-            <div class="col-md-6"><strong>Hostname:</strong> <span id="sysHostname">–</span></div>
-            <div class="col-md-6"><strong>Uptime:</strong> <span id="sysUptime">–</span></div>
-            <div class="col-md-6"><strong>CPU:</strong> <span id="sysCpu">–</span></div>
-            <div class="col-md-6"><strong>RAM:</strong> <span id="sysMem">–</span></div>
-            <div class="col-md-6"><strong>Disk /:</strong> <span id="sysDisk">–</span></div>
-            <div class="col-md-6"><strong>Load:</strong> <span id="sysLoad">–</span></div>
-          </div>
-          <hr>
-          <div><strong>Dienst:</strong> <span id="svcStatus">–</span></div>
-        </div>
-      </div>
-    </div>
   </div>
 </div>
 

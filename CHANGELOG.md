@@ -5,6 +5,7 @@ Jede Version ist als Git-Tag `vX.Y.Z` markiert und kann in der Weboberfläche un
 
 | Version | Datum | Änderung |
 |---|---|---|
+| v0.23.0 | 2026-11-02 | Oberfläche auf vier Seiten geordnet; JAuswertung-Startkarten-Einrichtung und Laden aus der Stoppuhr ausgelagert, Einstellungen in aufklappbare Expertenkapitel gegliedert, Client-IP zur Übernahme angeboten. Systemstatus unter Vitaldaten verschoben; Koffer-Temperatur/-Luftfeuchte mit 48-h-Verlauf und Archivierung ergänzt, Feuchteskala fest auf 0–100 %. Koffer-Statusmeldungen werden bei Redis-Ausfall weiterhin angenommen. |
 | v0.22.0 | 2026-10-31 | Vitaldaten-Tab: neue Zeile „Online seit“ je Taster (Uhrzeit und Dauer). Eine Lücke von mehr als 30 s startet die Online-Phase neu. |
 | v0.21.1 | 2026-10-31 | Oberfläche lädt wieder schnell: Lesende Abfragen (Browser, Taster-Displays) warten nicht mehr auf die globale Zustandssperre; nur schreibende Anfragen und das Weiterschalten des Laufs sperren. |
 | v0.21.0 | 2026-10-31 | Vitaldaten bleiben nach „Wettkampf beenden“ erhalten: Die Diagramme zeigen auch Taster, die nicht mehr angemeldet sind (Beschriftung „Taster X (früher)“, der Buchstabe wird je MAC gemerkt). Der Verlauf wird jetzt 48 Stunden gespeichert (vorher 6; Auswahl 12/24/48 h im Vitaldaten-Tab, lange Verläufe werden für die Anzeige ausgedünnt), das Archiv sichert entsprechend mehr. |

@@ -54,9 +54,18 @@ class VitalsHistoryTest(unittest.TestCase):
         self.assertEqual(len(vitals_history.history_pi(r, "Koffer-Pi")), 2)
         self.assertEqual(vitals_history.history_pi(r, "Bad-Pi"), [])
 
+    def test_charger_history(self):
+        r = FakeRedis()
+        vitals_history.add_charger(r, 1000, {"temp": 24.5, "humidity": 40})
+        vitals_history.add_charger(r, 2000, {"temp": None, "humidity": "x"})
+        self.assertEqual(vitals_history.history_charger(r, 1500), [[2000, None, None]])
+        self.assertEqual(len(vitals_history.history_charger(r)), 2)
+
     def test_errors_ignored(self):
         vitals_history.add(object(), "AA", 1, {})
         self.assertEqual(vitals_history.history(object(), "AA"), [])
+        vitals_history.add_charger(object(), 1, {})
+        self.assertEqual(vitals_history.history_charger(object()), [])
 
 
 if __name__ == "__main__":
