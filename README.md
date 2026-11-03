@@ -1,4 +1,4 @@
-# Stoppuhr – Pi-Software (v0.23.0)
+# Stoppuhr – Pi-Software (v0.24.0)
 
 Webbasierte Wettkampf-Stoppuhr: ESP32-Taster messen die Zeit, der Raspberry Pi sammelt, wertet aus und
 liefert die Ergebnisse an JAuswertung. Die Taster-Firmware liegt im Repository `Taster`.
@@ -17,12 +17,12 @@ Versionsverlauf: [CHANGELOG.md](CHANGELOG.md). Zwei-Pi-Betrieb (Koffer und Bad):
 - Tab „Vitaldaten“ (ab v0.9.0): je ein Diagramm für Akku, Akkuspannung, Temperatur, Luftfeuchte und WLAN-Stärke mit allen Tastern in eigenen Farben (Zeitfenster bis 48 Stunden). Senkrechte gestrichelte Linien „L<Nr>“ markieren jeden Laufstart.
   Die Werte kommen aus den ohnehin alle 10 s gesendeten Vitaldaten (kein Mehraufwand am Taster) und liegen in Redis (`VITALS_HIST:<MAC>`, höchstens 48 Stunden).
   Schnittstelle: `GET /api/vitals/history?mac=…&hours=…`.
-- Ladekoffer (ab v0.12.0): Die Ladeplatine (Projekt `Ladekoffer`) sendet alle 5 s per `POST /api/charger` (JSON) Ladezustand der 10 Plätze, Temperatur, Luftfeuchte und Ampel. Der Pi wertet daraus Statusmeldungen aus (Kopfzeile, Meldungen oben, Tabelle im Tab „Vitaldaten“). Nach 30 s ohne Meldung gilt der Ladekoffer als offline. `GET /api/charger` liefert den ausgewerteten Zustand. Die Taster sind davon nicht betroffen.
+- Ladekoffer (ab v0.12.0): Die Ladeplatine (Projekt `Ladekoffer`) sendet alle 5 s per `POST /api/charger` (JSON) Ladezustand der 10 Plätze, Temperatur, Luftfeuchte und Ampel. Der Pi wertet daraus Statusmeldungen aus (Kopfzeile, Meldungen oben, Tabelle im Tab „Vitaldaten“). Nach 30 s ohne Meldung gilt der Ladekoffer als offline. `GET /api/charger` liefert den ausgewerteten Zustand. Unter Einstellungen lassen sich belegte Ladeplätze einzeln wecken (Pi ab v0.24.0, Ladekoffer-Firmware ab v0.6.0).
 - Die Oberfläche hat vier Seiten: **Stoppuhr**, **Vitaldaten** (inklusive Systemstatus), **Archiv** und **Einstellungen**. JAuswertung-Startkarten werden in den Einstellungen geladen; dort kann die IP des aufrufenden Geräts übernommen werden. Koffer-Temperatur und -Luftfeuchte sind ebenfalls als Verlauf sichtbar.
 
 ## Installation
 
-### Auf dem Raspberry Pi (ohne Docker, empfohlen)
+### Auf dem Raspberry Pi
 
 Installiert Python-Umgebung, Redis, chrony und systemd-Dienste, die beim Booten starten:
 
@@ -40,18 +40,11 @@ bash deploy/install.sh
 - Zeitserver für die Taster: in `/etc/chrony/chrony.conf` `allow <Taster-Netz>` ergänzen
   (ohne Internet zusätzlich `local stratum 10`), danach `sudo systemctl restart chrony`.
 
-### Mit Docker (Entwicklung)
-
-```bash
-docker compose up --build -d
-```
-
-Pi-Software-Wechsel und WLAN-Umstellung funktionieren nur ohne Docker.
-
 ### Tests
 
 ```bash
-docker run --rm -v "$PWD/backend:/backend" -w /backend stoppuhr-app:latest python -m unittest discover -s tests
+cd backend
+../.venv/bin/python -m unittest discover -s tests
 ```
 
 ## Bedienung
@@ -65,6 +58,13 @@ Ohne Anmeldung bleiben nur erreichbar: die Schnittstellen der Taster (`/api/tast
 Die Sitzung bleibt 30 Tage; nach fünf Fehlversuchen pro Minute sperrt der Server die Anmeldung kurz.
 Der Schlüssel der Sitzungen und der Kennwort-Hash liegen in Redis und werden im Zwei-Pi-Betrieb mitkopiert.
 Kennwort vergessen: auf dem Pi `redis-cli del AUTH`, danach beim nächsten Öffnen neu festlegen.
+
+### JAuswertung und elektronische Zeitnahme einrichten
+
+1. In JAuswertung zuerst den HTTP-Server in den Einstellungen einschalten, dort den Port festlegen und ihn danach über die Weltkugel scharf schalten.
+2. Unter **Einstellungen → JAuswertung: HTTP-Server einrichten** die IP des JAuswertung-Rechners, denselben HTTP-Port und den Startkarten-Pfad eintragen.
+3. Die unter **Einstellungen → Elektronische Zeitnahme: Startkarten verbinden** angezeigte IP ohne Port im Feld **AlphaServer Server** von JAuswertung eintragen.
+4. Die Startkarten-Adresse speichern und **Startkarten laden**. Die Statuszeile bestätigt den Import oder zeigt den Fehler an.
 
 ### Wettkampf beenden
 
@@ -138,7 +138,7 @@ Diese laden sie vom Pi, prüfen die MD5 und starten neu. Ohne Internet stehen be
 **Einstellungen → Pi-Software**: Version (Git-Tag ab `v0.5.1`) wählen und **Übernehmen und neu starten**.
 Der Pi holt die Tags von GitHub, wechselt darauf (`git checkout`), installiert geänderte Abhängigkeiten und startet den Dienst neu (ca. 5 s).
 
-- Nur ohne Docker. Bei lokalen Änderungen im Ordner bricht der Wechsel mit Fehlermeldung ab.
+- Erfordert ein Git-Checkout. Bei lokalen Änderungen im Ordner bricht der Wechsel mit Fehlermeldung ab.
 - Gesperrt während eines Laufs; nach dem ersten gestarteten Lauf nur mit `UPDATE`.
 - Wechselt nur den Pi, dessen Oberfläche du bedienst (im Zwei-Pi-Betrieb beide einzeln).
 - Danach steht der Pi „detached“ auf dem Tag. Zurück zum Branch: `cd ~/apps/stoppuhr && git switch main`.

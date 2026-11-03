@@ -132,6 +132,7 @@ class EndpointTests(unittest.TestCase):
         r = self.client.post("/api/charger", json=payload())
         self.assertEqual(r.status_code, 200)
         self.assertEqual(self.client.get("/api/charger").status_code, 401)
+        self.assertEqual(self.client.post("/api/charger/wake", json={"slot": 1}).status_code, 401)
 
     def test_roundtrip(self):
         stopwatch.app.config["AUTH_DISABLED"] = True
@@ -148,6 +149,51 @@ class EndpointTests(unittest.TestCase):
 
     def test_invalid_payload(self):
         self.assertEqual(self.client.post("/api/charger", json={"x": 1}).status_code, 400)
+
+    def test_manual_wake_uses_configured_pin_and_pulse_and_waits_for_ack(self):
+        stopwatch.app.config["AUTH_DISABLED"] = True
+        self.client.post("/api/charger", json=payload())
+        self.client.post(
+            "/api/settings",
+            json={"charger_wake_pins": "1,2,3,4,5,6,7,8,9,10", "charger_wake_ms": 1800},
+        )
+
+        queued = self.client.post("/api/charger/wake", json={"slot": 4})
+        self.assertEqual(queued.status_code, 202)
+        request_id = queued.get_json()["id"]
+        self.assertEqual(self.client.post("/api/charger/wake", json={"slot": 5}).status_code, 409)
+
+        reply = self.client.post("/api/charger", json=payload()).get_json()
+        self.assertEqual(reply["manual_wake"], {"id": request_id, "slot": 4})
+        self.assertEqual(reply["wake"]["pins"][3], 4)
+        self.assertEqual(reply["wake"]["ms"], 1800)
+
+        ack = self.client.post("/api/charger", json=payload(wake_ack=request_id)).get_json()
+        self.assertEqual(ack["wake_ack"], request_id)
+        self.assertIsNone(ack["manual_wake"])
+        result = self.client.get(f"/api/charger/wake/{request_id}")
+        self.assertEqual(result.status_code, 200)
+        self.assertEqual(result.get_json()["status"], "completed")
+
+    def test_manual_wake_validates_slot_and_charger_state(self):
+        stopwatch.app.config["AUTH_DISABLED"] = True
+        for invalid in (0, 11, True, "1"):
+            self.assertEqual(
+                self.client.post("/api/charger/wake", json={"slot": invalid}).status_code,
+                400,
+            )
+
+        self.assertEqual(self.client.post("/api/charger/wake", json={"slot": 1}).status_code, 409)
+        self.client.post("/api/charger", json=payload(wake_active=True))
+        self.assertEqual(self.client.post("/api/charger/wake", json={"slot": 1}).status_code, 409)
+
+        empty_slots = [slot(n, present=n != 1) for n in range(1, 11)]
+        self.client.post("/api/charger", json=payload(slots=empty_slots))
+        self.assertEqual(self.client.post("/api/charger/wake", json={"slot": 1}).status_code, 409)
+
+        faulty_slots = [slot(n, fault=n == 2) for n in range(1, 11)]
+        self.client.post("/api/charger", json=payload(slots=faulty_slots))
+        self.assertEqual(self.client.post("/api/charger/wake", json={"slot": 2}).status_code, 409)
 
     def test_redis_down_still_works(self):
         stopwatch.app.config["AUTH_DISABLED"] = True

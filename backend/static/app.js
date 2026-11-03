@@ -608,6 +608,15 @@ async function apiPost(path, body) {
   return j;
 }
 
+async function waitForChargerWake(requestId) {
+  for (let attempt = 0; attempt < 65; attempt++) {
+    await new Promise(resolve => setTimeout(resolve, 1000));
+    const result = await apiGet(`/api/charger/wake/${encodeURIComponent(requestId)}`);
+    if (result.status !== "queued") return result;
+  }
+  throw new Error("Keine Bestätigung vom Ladekoffer innerhalb von 65 Sekunden.");
+}
+
 // -----------------------------
 // Zugang und WLAN-Netze
 // -----------------------------
@@ -843,6 +852,7 @@ async function deployPi() {
 // Settings / Startcards
 // -----------------------------
 let clientIp = "";
+let startcardsProtocol = "http:";
 
 async function loadClientIp() {
   const result = await apiGet("/api/client-ip");
@@ -857,9 +867,48 @@ function showClientIpError(message) {
   error.classList.toggle("d-none", !message);
 }
 
+function setStartcardsAddress(value) {
+  const input = byId("baseUrlInputSettings");
+  const portInput = byId("startcardsPortInput");
+  input.value = "";
+  portInput.value = "";
+  startcardsProtocol = "http:";
+  if (!value) return;
+
+  try {
+    const url = new URL(value.includes("://") ? value : `http://${value}`);
+    startcardsProtocol = url.protocol === "https:" ? "https:" : "http:";
+    input.value = url.hostname;
+    portInput.value = url.port;
+  } catch {
+    input.value = value;
+  }
+}
+
+function getStartcardsBaseUrl() {
+  const host = byId("baseUrlInputSettings").value.trim();
+  const port = byId("startcardsPortInput").value.trim();
+  if (!host && !port) return "";
+  if (!host || !port) throw new Error("Bitte IP-Adresse und HTTP-Port des JAuswertung-Servers eintragen.");
+  if (!/^\d+$/.test(port) || Number(port) < 1 || Number(port) > 65535) {
+    throw new Error("Der HTTP-Port muss eine Zahl zwischen 1 und 65535 sein.");
+  }
+
+  const formattedHost = host.includes(":") && !(host.startsWith("[") && host.endsWith("]"))
+    ? `[${host}]`
+    : host;
+  const baseUrl = `${startcardsProtocol}//${formattedHost}:${port}`;
+  try {
+    new URL(baseUrl);
+  } catch {
+    throw new Error("Bitte eine gültige IP-Adresse oder einen gültigen Hostnamen eintragen.");
+  }
+  return baseUrl;
+}
+
 async function loadSettingsIntoUI() {
   const s = await apiGet("/api/settings");
-  byId("baseUrlInputSettings").value = s.startcards_base_url || "";
+  setStartcardsAddress(s.startcards_base_url || "");
   byId("suffixInput").value = s.startcards_suffix || "/export/CSV/Startkarten.csv";
   byId("autoNextInput").value = s.auto_next_run_s ?? "10";
   byId("stopLockoutInput").value = s.stop_lockout_s ?? "5";
@@ -1621,11 +1670,11 @@ async function init() {
   });
 
   byId("btnReloadStartcards").addEventListener("click", async () => {
-    const baseUrl = byId("baseUrlInputSettings").value.trim();
-    const suffix = byId("suffixInput").value.trim();
     byId("startcardsStatus").textContent = "Status: lade Startkarten…";
     byId("startcardsStatus").classList.remove("text-danger");
     try {
+      const baseUrl = getStartcardsBaseUrl();
+      const suffix = byId("suffixInput").value.trim();
       await apiPost("/api/startcards/reload", { base_url: baseUrl, suffix: suffix });
       await loadSettingsIntoUI();
       await loadStartcardsFromBackend();
@@ -1638,7 +1687,7 @@ async function init() {
   byId("btnSaveStartcardsSettings").addEventListener("click", async () => {
     try {
       await apiPost("/api/settings", {
-        startcards_base_url: byId("baseUrlInputSettings").value.trim(),
+        startcards_base_url: getStartcardsBaseUrl(),
         startcards_suffix: byId("suffixInput").value.trim()
       });
       byId("startcardsStatus").textContent = "Startkarten-Adresse gespeichert.";
@@ -1649,29 +1698,38 @@ async function init() {
     }
   });
 
+  byId("manualWakeButtons").addEventListener("click", async event => {
+    const button = event.target.closest("[data-wake-slot]");
+    if (!button || button.disabled) return;
+    const slot = Number(button.dataset.wakeSlot);
+    const buttons = [...byId("manualWakeButtons").querySelectorAll("button")];
+    const status = byId("manualWakeStatus");
+    buttons.forEach(item => { item.disabled = true; });
+    status.className = "small text-muted mt-2";
+    status.textContent = `Platz ${slot}: Weckbefehl wird an den Ladekoffer gesendet …`;
+    try {
+      const request = await apiPost("/api/charger/wake", { slot });
+      const result = await waitForChargerWake(request.id);
+      if (result.status === "completed") {
+        status.className = "small text-success mt-2";
+        status.textContent = `Platz ${slot}: Weckimpuls ausgelöst.`;
+      } else {
+        throw new Error(`Der Weckbefehl für Platz ${slot} ist abgelaufen.`);
+      }
+    } catch (error) {
+      status.className = "small text-danger mt-2";
+      status.textContent = `Platz ${slot}: ${error.message}`;
+    } finally {
+      buttons.forEach(item => { item.disabled = false; });
+    }
+  });
+
   byId("btnUseClientIp").addEventListener("click", () => {
     if (!clientIp) {
       showClientIpError("Die IP-Adresse ist noch nicht verfügbar.");
       return;
     }
-    const input = byId("baseUrlInputSettings");
-    const current = input.value.trim();
-    let protocol = "http:";
-    let port = "";
-    if (current) {
-      try {
-        const url = new URL(current.includes("://") ? current : `http://${current}`);
-        protocol = url.protocol;
-        const authority = current.replace(/^https?:\/\//i, "").split(/[/?#]/, 1)[0];
-        const explicitPort = authority.match(/^\[[^\]]+\]:(\d+)$/) || authority.match(/^[^:]+:(\d+)$/);
-        port = explicitPort ? explicitPort[1] : url.port;
-      } catch {
-        showClientIpError("Die vorhandene Basis-URL ist ungültig. Bitte Port und Adresse prüfen.");
-        return;
-      }
-    }
-    const host = clientIp.includes(":") && !clientIp.startsWith("[") ? `[${clientIp}]` : clientIp;
-    input.value = `${protocol}//${host}${port ? ":" + port : ""}`;
+    byId("baseUrlInputSettings").value = clientIp;
     showClientIpError("");
   });
 
@@ -1696,9 +1754,9 @@ async function init() {
   });
 
   byId("btnSaveSettings").addEventListener("click", async () => {
-    const baseUrl = byId("baseUrlInputSettings").value.trim();
-    const suffix = byId("suffixInput").value.trim();
     try {
+      const baseUrl = getStartcardsBaseUrl();
+      const suffix = byId("suffixInput").value.trim();
       await apiPost("/api/settings", {
         startcards_base_url: baseUrl,
         startcards_suffix: suffix,

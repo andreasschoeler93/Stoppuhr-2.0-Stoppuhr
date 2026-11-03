@@ -10,6 +10,11 @@
     .nav-tabs .nav-link.active { font-weight: 600; }
     .settings-summary { cursor: pointer; font-weight: 600; padding: .7rem .9rem; border: 1px solid #dee2e6; border-radius: .375rem; background: #fff; }
     details[open] > .settings-summary { margin-bottom: .5rem; }
+    .setup-card { border-left: .25rem solid #0d6efd; }
+    .setup-step { display: inline-flex; align-items: center; justify-content: center; width: 1.75rem; height: 1.75rem; border-radius: 50%; background: #0d6efd; color: #fff; font-weight: 700; }
+    .wake-slot-grid { display: grid; grid-template-columns: repeat(10, minmax(0, 1fr)); gap: .5rem; }
+    @media (max-width: 991.98px) { .wake-slot-grid { grid-template-columns: repeat(5, minmax(0, 1fr)); } }
+    @media (max-width: 575.98px) { .wake-slot-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
     .taster-card { border-radius: .5rem; border: 1px solid #dee2e6; padding: .5rem .75rem; margin-bottom: .5rem; background:#fff; cursor: grab; }
     .taster-card.dragging { opacity: .6; }
     .taster-header { display:flex; justify-content:space-between; align-items:center; font-weight:600; font-size:.95rem; }
@@ -159,34 +164,32 @@
 
     <!-- TAB: Einstellungen -->
     <div class="tab-pane fade" id="settings" role="tabpanel">
-      <div class="card mb-3">
+      <div class="card setup-card mb-3">
         <div class="card-body">
-          <h2 class="h6 mb-3">Eintrag für JAuswertung (AlphaServer)</h2>
-          <label class="form-label">Im Feld „AlphaServer Server“ eintragen</label>
-          <div class="input-group">
-            <input type="text" id="alphaServerValue" class="form-control" readonly>
-            <button class="btn btn-outline-primary" type="button" id="btnCopyAlpha">Kopieren</button>
+          <div class="d-flex align-items-center gap-2 mb-2">
+            <span class="setup-step">1</span>
+            <h2 class="h6 mb-0">JAuswertung: HTTP-Server einrichten</h2>
           </div>
-          <div class="form-text">
-            Nur die IP eintragen, <strong>ohne Port</strong>: JAuswertung ergänzt <code>:1999/legacy/heats.xml</code> selbst
-            und ruft <code id="alphaServerUrl"></code> ab.
-            <span class="text-success d-none" id="alphaCopiedMsg">Kopiert.</span>
-          </div>
-        </div>
-      </div>
-
-      <div class="card mb-3">
-        <div class="card-body">
-          <h2 class="h6 mb-3">Startkarten aus JAuswertung</h2>
+          <p class="text-muted small mb-3">
+            Aktiviere in JAuswertung zuerst den HTTP-Server in den Einstellungen und schalte ihn danach
+            über die Weltkugel scharf. Lege in JAuswertung in den Einstellungen den HTTP-Port fest und trage
+            denselben Port sowie die IP des JAuswertung-Rechners hier ein.
+          </p>
           <div class="row g-3 align-items-end">
             <div class="col-md-6">
-              <label class="form-label" for="baseUrlInputSettings">Basis-URL (IP:Port)</label>
-              <input type="text" id="baseUrlInputSettings" class="form-control" placeholder="192.168.178.33:8082">
+              <label class="form-label" for="baseUrlInputSettings">JAuswertung-Rechner (IP-Adresse)</label>
+              <input type="text" id="baseUrlInputSettings" class="form-control" placeholder="192.168.178.33">
             </div>
-            <div class="col-md-6">
+            <div class="col-md-3">
+              <label class="form-label" for="startcardsPortInput">HTTP-Port</label>
+              <input type="number" id="startcardsPortInput" class="form-control" min="1" max="65535" step="1" placeholder="z. B. 8082">
+            </div>
+            <div class="col-md-3">
               <label class="form-label" for="suffixInput">Pfad / Dateiname</label>
               <input type="text" id="suffixInput" class="form-control" value="/export/CSV/Startkarten.csv">
-              <div class="form-text">Typisch: <code>/export/CSV/Startkarten.csv</code></div>
+            </div>
+            <div class="col-12">
+              <div class="form-text">Üblicher Pfad: <code>/export/CSV/Startkarten.csv</code></div>
             </div>
             <div class="col-12">
               <div class="d-flex flex-wrap gap-2 align-items-center">
@@ -201,6 +204,55 @@
               <span class="small text-muted" id="startcardsStatus">Status: noch nicht geladen.</span>
             </div>
           </div>
+        </div>
+      </div>
+
+      <div class="card setup-card mb-3">
+        <div class="card-body">
+          <div class="d-flex align-items-center gap-2 mb-2">
+            <span class="setup-step">2</span>
+            <h2 class="h6 mb-0">Elektronische Zeitnahme: Startkarten verbinden</h2>
+          </div>
+          <p class="text-muted small mb-3">
+            Trage in JAuswertung im Feld <strong>„AlphaServer Server“</strong> die IP dieses Stoppuhr-Servers ein.
+            Diese IP wird ohne Port verwendet; der HTTP-Server aus Schritt 1 bleibt eingeschaltet.
+          </p>
+          <label class="form-label" for="alphaServerValue">Diese IP in JAuswertung eintragen (ohne Port)</label>
+          <div class="input-group">
+            <input type="text" id="alphaServerValue" class="form-control" readonly>
+            <button class="btn btn-outline-primary" type="button" id="btnCopyAlpha">Kopieren</button>
+          </div>
+          <div class="form-text">
+            JAuswertung ergänzt <code>:1999/legacy/heats.xml</code> selbst und ruft
+            <code id="alphaServerUrl"></code> ab.
+            <span class="text-success d-none" id="alphaCopiedMsg">Kopiert.</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="card mb-3">
+        <div class="card-body">
+          <h2 class="h6 mb-2">Taster einzeln aus dem Ladekoffer wecken</h2>
+          <p class="text-muted small mb-3">
+            Wähle einen belegten Ladeplatz. Der Ladekoffer pulst den dafür eingestellten Magnet-Pin
+            für die konfigurierte Impulsdauer. Es werden nur belegte, fehlerfreie Fächer freigegeben.
+          </p>
+          <div class="wake-slot-grid" id="manualWakeButtons" aria-label="Ladeplatz zum Wecken auswählen">
+            {% for slot in range(1, 11) %}
+              <button class="btn btn-outline-primary" type="button" data-wake-slot="{{ slot }}">Platz {{ slot }}</button>
+            {% endfor %}
+          </div>
+          <div class="small text-muted mt-2" id="manualWakeStatus" role="status" aria-live="polite">
+            Der Ladekoffer muss online sein. Einzel-Wecken erfordert Ladekoffer-Firmware ab v0.6.0.
+          </div>
+        </div>
+      </div>
+
+      <div class="card border-danger mb-3">
+        <div class="card-body">
+          <h2 class="h6 text-danger mb-2">Wettkampf beenden</h2>
+          <p class="mb-2">Löscht Startkarten, Laufzeiten, Ergebnisse, Taster- und Bahnzuordnungen. Erreichbare Taster schalten sich aus; ihre Buchstaben werden beim nächsten Anmelden neu vergeben.</p>
+          <button class="btn btn-danger btn-sm" id="btnEndCompetition">Wettkampf beenden und Taster ausschalten</button>
         </div>
       </div>
 
@@ -436,17 +488,6 @@
             <thead><tr><th>Taster</th><th>Online</th><th>Version</th><th>Update</th></tr></thead>
             <tbody id="fwTasters"></tbody>
           </table>
-        </div>
-            </div>
-          </details>
-
-          <details class="mb-3">
-            <summary class="settings-summary text-danger">Wettkampf beenden</summary>
-            <div class="card border-danger mt-2">
-        <div class="card-body">
-          <h2 class="h6 text-danger mb-2">Wettkampf beenden</h2>
-          <p class="mb-2">Löscht Startkarten, Laufzeiten, Ergebnisse, Taster- und Bahnzuordnungen. Erreichbare Taster schalten sich aus; ihre Buchstaben werden beim nächsten Anmelden neu vergeben.</p>
-          <button class="btn btn-danger btn-sm" id="btnEndCompetition">Wettkampf beenden und Taster ausschalten</button>
         </div>
             </div>
           </details>

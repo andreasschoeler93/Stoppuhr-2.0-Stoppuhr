@@ -12,7 +12,7 @@ from typing import Any, Final, Optional
 REPO_DIR: Final[str] = os.environ.get(
     "STOPPUHR_REPO_DIR", os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 )
-# Fruehere Staende kennen die systemd-Installation ohne Docker nicht
+# Fruehere Staende kennen die systemd-Installation nicht
 MIN_VERSION: Final[tuple[int, int, int]] = (0, 5, 1)
 TAG_RE: Final[re.Pattern[str]] = re.compile(r"^v(\d+)\.(\d+)\.(\d+)$")
 FETCH_TTL_S: Final[int] = 120
@@ -40,7 +40,7 @@ def _git(*args: str, timeout: int = 20) -> str:
 
 
 def available() -> bool:
-    """True, wenn die Software als Git-Checkout laeuft (nicht im Docker-Image)."""
+    """True, wenn die Software aus einem Git-Checkout laeuft."""
     try:
         _git("rev-parse", "--git-dir")
         return True

@@ -1,6 +1,6 @@
 # ----------------------------------------
 # Stoppuhr Webserver
-# Version: v0.23.0
+# Version: v0.24.0
 # Status: stable-beta
 # ----------------------------------------
 
@@ -16,6 +16,7 @@ import struct
 import threading
 import time
 import unicodedata
+import uuid
 import urllib.request
 from collections import defaultdict
 from dataclasses import dataclass
@@ -40,7 +41,7 @@ import wifi_config
 from xml_writer import create_xml_heats
 
 
-APP_VERSION: Final[str] = "0.23.0"
+APP_VERSION: Final[str] = "0.24.0"
 DEFAULT_PORT: Final[int] = 1999  # Since JAuswertung expected this port
 EXIT_ERROR: Final[int] = 1
 STATE_KEY: Final[str] = "STATE"
@@ -50,6 +51,7 @@ STARTER_STOP_MIN_MS: Final[int] = 1500  # Zweiter Starter-Druck davor gilt als P
 STARTER_FINISH_GRACE_MS: Final[int] = 5000  # Kombirolle: so lange nach Lauf-Ende zaehlt ein Druck noch als Zieleinlauf
 CLOCK_OFFSET_MIN_MS: Final[int] = 250
 KEEP_HOURS_DEFAULT: Final[float] = 6.0
+MANUAL_WAKE_TIMEOUT_MS: Final[int] = 60_000
 HEATS_XML_PATH: Final[str] = os.environ.get("HEATS_XML_PATH", "/app/results/heats.xml")
 
 
@@ -129,6 +131,8 @@ class State(TypedDict):
     # Due to serialization, store run number always as string
     startcards_per_run: dict[str, list[Startcard]]
     triggers_per_run: dict[str, dict[str, PressEvent]]  # Maps run to lane to PressEvent
+    charger_manual_wake: Optional[dict[str, Any]]
+    charger_manual_wake_results: list[dict[str, Any]]
 
 
 def _default_state() -> State:
@@ -165,6 +169,8 @@ def _default_state() -> State:
         "current_attempt": 1,
         "aborted_attempts": [],
         "abort_requests": {},
+        "charger_manual_wake": None,
+        "charger_manual_wake_results": [],
     }
 
 
@@ -226,6 +232,12 @@ def _wake_config(st: State) -> dict[str, Any]:
         "ms": _int_setting(st, "charger_wake_ms", 3000),
         "gap_ms": _int_setting(st, "charger_wake_gap_ms", 1000),
     }
+
+
+def _record_manual_wake_result(st: State, result: dict[str, Any]) -> None:
+    results = st.setdefault("charger_manual_wake_results", [])
+    results.append(result)
+    del results[:-20]
 
 
 def _int_setting(st: State, key: str, default: int) -> int:
@@ -1044,7 +1056,8 @@ def api_post_vitals():
 @app.post("/api/charger")
 def api_post_charger():
     """Statusmeldung der Ladeplatine des Ladekoffers (ohne Anmeldung, wie die Taster)."""
-    status = ladekoffer.sanitize(request.get_json(force=True, silent=True))
+    payload = request.get_json(force=True, silent=True)
+    status = ladekoffer.sanitize(payload)
     if status is None:
         return jsonify({"ok": False, "error": "invalid payload"}), 400
     # Der Server-Zeitstempel zaehlt, die Platine hat keine Uhr
@@ -1054,6 +1067,47 @@ def api_post_charger():
     try:
         st = load_state()
         reply: dict[str, Any] = {"ok": True, "wake": _wake_config(st), "beep": _beep_config(st)}
+        now = status["ts"]
+        pending = st.get("charger_manual_wake")
+        wake_ack = payload.get("wake_ack") if isinstance(payload, dict) else None
+        if pending and wake_ack == pending.get("id"):
+            result = {
+                "id": pending["id"],
+                "slot": pending["slot"],
+                "status": "completed",
+                "completed_ts": now,
+            }
+            _record_manual_wake_result(st, result)
+            st["charger_manual_wake"] = None
+            reply["wake_ack"] = wake_ack
+            pending = None
+            save_state(st)
+        elif isinstance(wake_ack, str):
+            completed = next(
+                (result for result in st.get("charger_manual_wake_results", []) if result.get("id") == wake_ack),
+                None,
+            )
+            if completed:
+                if completed.get("status") == "expired":
+                    completed["status"] = "completed"
+                    completed["completed_ts"] = now
+                    save_state(st)
+                reply["wake_ack"] = wake_ack
+
+        if pending and now >= int(pending.get("expires_ts") or 0):
+            _record_manual_wake_result(st, {
+                "id": pending["id"],
+                "slot": pending["slot"],
+                "status": "expired",
+                "completed_ts": now,
+            })
+            st["charger_manual_wake"] = None
+            pending = None
+            save_state(st)
+        reply["manual_wake"] = (
+            {"id": pending["id"], "slot": pending["slot"]}
+            if pending else None
+        )
         ota = charger_firmware.offer(redis_store, str(status.get("fw") or ""))
     except redis.RedisError:
         logger.warning("Redis nicht erreichbar; Ladekoffer-Status wird nur im Arbeitsspeicher gehalten")
@@ -1067,6 +1121,66 @@ def api_post_charger():
     if ota:
         reply["ota"] = ota
     return jsonify(reply)
+
+
+@app.post("/api/charger/wake")
+def api_request_charger_wake() -> ResponseReturnValue:
+    payload = request.get_json(force=True, silent=True) or {}
+    slot = payload.get("slot") if isinstance(payload, dict) else None
+    if isinstance(slot, bool) or not isinstance(slot, int) or not 1 <= slot <= ladekoffer.SLOT_COUNT:
+        return jsonify({"ok": False, "error": "slot must be an integer from 1 to 10"}), 400
+
+    now = now_ms()
+    charger = ladekoffer.evaluate(ladekoffer.load(redis_store), now)
+    charger_status = charger.get("status")
+    if not charger.get("online") or not isinstance(charger_status, dict):
+        return jsonify({"ok": False, "error": "Der Ladekoffer ist offline."}), 409
+    if charger_status.get("wake_active"):
+        return jsonify({"ok": False, "error": "Der Ladekoffer führt gerade einen Weckvorgang aus."}), 409
+
+    charger_slot = next((item for item in charger_status.get("slots", []) if item["n"] == slot), None)
+    if not charger_slot or not charger_slot["present"]:
+        return jsonify({"ok": False, "error": f"Auf Platz {slot} ist kein Taster eingesetzt."}), 409
+    if charger_slot["fault"]:
+        return jsonify({"ok": False, "error": f"Platz {slot} meldet einen Fehler."}), 409
+
+    st = load_state()
+    pending = st.get("charger_manual_wake")
+    if pending and now < int(pending.get("expires_ts") or 0):
+        return jsonify({"ok": False, "error": "Ein anderer Weckbefehl wird noch ausgeführt."}), 409
+    if pending:
+        _record_manual_wake_result(st, {
+            "id": pending["id"],
+            "slot": pending["slot"],
+            "status": "expired",
+            "completed_ts": now,
+        })
+
+    request_id = uuid.uuid4().hex
+    st["charger_manual_wake"] = {
+        "id": request_id,
+        "slot": slot,
+        "requested_ts": now,
+        "expires_ts": now + MANUAL_WAKE_TIMEOUT_MS,
+    }
+    save_state(st)
+    return jsonify({"ok": True, "id": request_id, "status": "queued"}), 202
+
+
+@app.get("/api/charger/wake/<request_id>")
+def api_get_charger_wake(request_id: str) -> ResponseReturnValue:
+    st = load_state()
+    pending = st.get("charger_manual_wake")
+    if pending and pending.get("id") == request_id:
+        status = "expired" if now_ms() >= int(pending.get("expires_ts") or 0) else "queued"
+        return jsonify({"ok": True, "id": request_id, "slot": pending["slot"], "status": status})
+    result = next(
+        (item for item in reversed(st.get("charger_manual_wake_results", [])) if item.get("id") == request_id),
+        None,
+    )
+    if result:
+        return jsonify({"ok": True, **result})
+    return jsonify({"ok": False, "error": "Weckbefehl nicht gefunden."}), 404
 
 
 @app.get("/api/charger/firmware")
@@ -1660,7 +1774,7 @@ def api_pi_update_releases():
         "confirm_text": OTA_CONFIRM_TEXT,
     }
     if not pi_update.available():
-        return jsonify({**base, "supported": False, "tags": [], "error": "Kein Git-Checkout (Docker?)", "current": {}})
+        return jsonify({**base, "supported": False, "tags": [], "error": "Kein Git-Checkout", "current": {}})
     try:
         tags, error = pi_update.list_tags()
     except Exception as exc:
@@ -1676,7 +1790,7 @@ def api_pi_update_deploy():
     if pi_update.parse_tag(tag) is None:
         return jsonify({"ok": False, "error": "Ungueltige Version"}), 400
     if not pi_update.available():
-        return jsonify({"ok": False, "error": "Kein Git-Checkout (Docker?)"}), 400
+        return jsonify({"ok": False, "error": "Kein Git-Checkout"}), 400
     st = load_state()
     if _run_in_progress(st):
         return jsonify({"ok": False, "error": "Ein Lauf laeuft gerade"}), 409

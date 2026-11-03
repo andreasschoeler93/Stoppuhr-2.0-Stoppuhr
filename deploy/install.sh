@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Installiert die Stoppuhr ohne Docker auf einem Raspberry Pi (Raspberry Pi OS / Debian).
+# Installiert die Stoppuhr auf einem Raspberry Pi (Raspberry Pi OS / Debian).
 # Aufruf im Projektordner:  bash deploy/install.sh
 set -euo pipefail
 
@@ -11,7 +11,7 @@ sudo apt-get update
 sudo apt-get install -y python3 python3-venv python3-pip redis-server chrony
 
 echo "== Redis dauerhaft speichern =="
-# Wie im Docker-Aufbau: alle 10 s sichern, wenn sich mindestens ein Wert geaendert hat
+# Redis soll alle 10 s sichern, wenn sich mindestens ein Wert geaendert hat
 sudo sed -i 's/^save .*/# &/' /etc/redis/redis.conf
 if ! grep -q '^save 10 1' /etc/redis/redis.conf; then
   echo 'save 10 1' | sudo tee -a /etc/redis/redis.conf >/dev/null

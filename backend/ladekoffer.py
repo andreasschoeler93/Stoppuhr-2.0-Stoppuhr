@@ -66,6 +66,7 @@ def sanitize(payload: Any) -> Optional[dict[str, Any]]:
         "light": light if light in LIGHTS else "off",
         "fault": payload.get("fault") is True,
         "muted": payload.get("muted") is True,
+        "wake_active": payload.get("wake_active") is True,
         "slots": [slots[n] for n in sorted(slots)],
     }
 
