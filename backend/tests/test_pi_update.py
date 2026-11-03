@@ -53,6 +53,21 @@ class PiUpdateTests(unittest.TestCase):
         self.assertEqual(resp.status_code, 500)
         self.mocks[3].return_value.start.assert_not_called()
 
+    def test_peer_deploy_goes_through_partner_service(self):
+        with patch.object(stopwatch.node_info, "peer_call", return_value={"ok": True, "commit": "def5678"}) as call:
+            resp = self._deploy(target="peer")
+        self.assertEqual(resp.status_code, 200)
+        self.assertTrue(resp.json["peer"])
+        call.assert_called_once()
+        self.assertEqual(call.call_args.args[:2], ("/pi-update", {"tag": "v0.7.0"}))
+        self.mocks[2].assert_not_called()
+        self.mocks[3].return_value.start.assert_not_called()
+
+    def test_peer_deploy_reports_unreachable_partner(self):
+        with patch.object(stopwatch.node_info, "peer_call", side_effect=RuntimeError("Partner-Pi nicht erreichbar")):
+            resp = self._deploy(target="peer")
+        self.assertEqual(resp.status_code, 500)
+
     def test_tag_parser(self):
         self.assertEqual(pi_update.parse_tag("v0.7.1"), (0, 7, 1))
         self.assertIsNone(pi_update.parse_tag("v0.7.1-pi"))

@@ -840,12 +840,47 @@ async function deployFirmware() {
 // Pi-Software
 // -----------------------------
 let piInfo = null;
+let clusterInfo = null;
+
+function piKindName(kind) {
+  return kind === "bad" ? "Bad-Pi" : kind === "koffer" ? "Koffer-Pi" : "Pi";
+}
+
+function piTarget() {
+  const sel = byId("piTarget");
+  return sel && !sel.closest("#piTargetWrap").classList.contains("d-none") ? sel.value : "self";
+}
+
+function updatePiTargets() {
+  const wrap = byId("piTargetWrap");
+  const sel = byId("piTarget");
+  const c = clusterInfo;
+  if (!c?.two_pi) { wrap.classList.add("d-none"); return; }
+  const ownKind = c.self?.kind || "";
+  const peerKind = c.peer?.kind || (ownKind === "bad" ? "koffer" : ownKind === "koffer" ? "bad" : "");
+  const want = [
+    ["self", `${piKindName(ownKind)} (dieser)`],
+    ["peer", `${piKindName(peerKind)} (Partner)${c.peer?.reachable ? "" : " – nicht erreichbar"}`],
+  ];
+  const previous = sel.value || "self";
+  if (sel.options.length !== 2 || want.some(([v, t], i) => sel.options[i].value !== v || sel.options[i].textContent !== t)) {
+    sel.replaceChildren(...want.map(([v, t]) => {
+      const o = document.createElement("option");
+      o.value = v;
+      o.textContent = t;
+      return o;
+    }));
+    sel.value = previous;
+  }
+  wrap.classList.remove("d-none");
+}
 
 async function refreshPiUpdate() {
-  piInfo = await apiGet("/api/pi-update/releases");
+  const target = piTarget();
+  piInfo = await apiGet("/api/pi-update/releases" + (target === "peer" ? "?target=peer" : ""));
   const cur = piInfo.current || {};
   const where = cur.tag || (cur.branch ? cur.branch + " @ " : "") + (cur.commit || "");
-  byId("piCurrent").textContent = `v${piInfo.version}` + (where ? ` (${where})` : "");
+  byId("piCurrent").textContent = (piInfo.version ? `v${piInfo.version}` : "") + (where ? (piInfo.version ? ` (${where})` : where) : piInfo.version ? "" : "–");
   const sel = byId("piSelect");
   const previous = sel.value;
   sel.replaceChildren(...piInfo.tags.map(tag => {
@@ -866,7 +901,10 @@ async function refreshPiUpdate() {
 async function deployPi() {
   const tag = byId("piSelect").value;
   if (!tag) return;
-  if (!window.confirm(`Pi-Software auf ${tag} wechseln? Der Dienst startet neu.`)) return;
+  const target = piTarget();
+  const peer = target === "peer";
+  const who = byId("piTarget").selectedOptions[0]?.textContent.replace(/ – nicht erreichbar$/, "") || "diesen Pi";
+  if (!window.confirm(`Software von ${peer ? who : "diesem Pi"} auf ${tag} wechseln? Der Dienst startet dort neu.`)) return;
   let confirmText = "";
   if (piInfo?.competition_started) {
     const typed = window.prompt(
@@ -878,11 +916,21 @@ async function deployPi() {
   }
   const btn = byId("btnPiDeploy");
   btn.disabled = true;
+  const label = btn.textContent;
+  if (peer) btn.textContent = "Wird installiert …";
   try {
-    await apiPost("/api/pi-update/deploy", { tag, confirm: confirmText });
+    await apiPost("/api/pi-update/deploy", { tag, confirm: confirmText, target });
   } catch (e) {
     alert("Wechsel nicht möglich: " + e.message);
     btn.disabled = false;
+    btn.textContent = label;
+    return;
+  }
+  if (peer) {
+    btn.disabled = false;
+    btn.textContent = label;
+    alert(`${who}: Software auf ${tag} gewechselt, der Dienst startet dort neu.`);
+    refreshPiUpdate().catch(() => {});
     return;
   }
   btn.textContent = "Startet neu …";
@@ -1702,6 +1750,8 @@ function nodeCardHtml(n, label) {
 
 async function refreshCluster() {
   const c = await apiGet("/api/cluster-status");
+  clusterInfo = c;
+  updatePiTargets();
   // Antwortet plötzlich ein anderer Pi unter derselben Adresse (Übernahme oder Rückwechsel), Seite neu laden
   if ((c.self?.kind || "") !== (document.body.dataset.node || "")) { location.reload(); return; }
   const takeover = byId("takeoverText");
@@ -1918,6 +1968,7 @@ async function init() {
   byId("btnClearFinish").addEventListener("click", () => unassignLane("ziel"));
   byId("btnFwDeploy").addEventListener("click", deployFirmware);
   byId("btnPiDeploy").addEventListener("click", deployPi);
+  byId("piTarget").addEventListener("change", () => refreshPiUpdate().catch(e => alert("Versionen laden fehlgeschlagen: " + e.message)));
   byId("btnPiReload").addEventListener("click", () => refreshPiUpdate().catch(e => alert("Versionen laden fehlgeschlagen: " + e.message)));
   byId("btnFwReload").addEventListener("click", () => refreshFirmware().catch(e => alert("Firmware laden fehlgeschlagen: " + e.message)));
   byId("btnFwCancel").addEventListener("click", async () => {
@@ -1984,7 +2035,7 @@ async function init() {
 
   // initial loads
   await refreshSystemStatus().catch(() => {});
-  setInterval(() => refreshCluster().catch(() => {}), 10000);
+  setInterval(() => refreshCluster().catch(() => {}), 5000);
   // Grenzwerte zuerst laden, damit Farben und Balken von Anfang an stimmen
   renderLimitsForm();
   await loadLimits().catch(() => {});

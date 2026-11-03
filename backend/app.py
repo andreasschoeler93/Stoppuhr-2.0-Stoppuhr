@@ -1,6 +1,6 @@
 # ----------------------------------------
 # Stoppuhr Webserver
-# Version: v0.27.0
+# Version: v0.28.0
 # Status: stable-beta
 # ----------------------------------------
 
@@ -42,7 +42,7 @@ import node_names
 from xml_writer import create_xml_heats
 
 
-APP_VERSION: Final[str] = "0.27.0"
+APP_VERSION: Final[str] = "0.28.0"
 DEFAULT_PORT: Final[int] = 1999  # Since JAuswertung expected this port
 EXIT_ERROR: Final[int] = 1
 STATE_KEY: Final[str] = "STATE"
@@ -1813,7 +1813,7 @@ def api_ota_status():
 
 @app.get("/api/pi-update/releases")
 def api_pi_update_releases():
-    """Verfuegbare Software-Versionen (Git-Tags) des Pi."""
+    """Verfuegbare Software-Versionen (Git-Tags) dieses Pi oder (target=peer) des Partner-Pi."""
     st = load_state()
     base = {
         "version": APP_VERSION,
@@ -1821,6 +1821,15 @@ def api_pi_update_releases():
         "run_in_progress": _run_in_progress(st),
         "confirm_text": OTA_CONFIRM_TEXT,
     }
+    if request.args.get("target") == "peer":
+        try:
+            data = node_info.peer_call("/pi-tags", timeout=40)
+        except RuntimeError as exc:
+            return jsonify({**base, "version": None, "supported": False, "tags": [], "error": str(exc), "current": {}})
+        return jsonify({
+            **base, "version": None, "supported": bool(data.get("supported")), "tags": data.get("tags", []),
+            "error": data.get("error"), "current": data.get("current") or {},
+        })
     if not pi_update.available():
         return jsonify({**base, "supported": False, "tags": [], "error": "Kein Git-Checkout", "current": {}})
     try:
@@ -1832,18 +1841,29 @@ def api_pi_update_releases():
 
 @app.post("/api/pi-update/deploy")
 def api_pi_update_deploy():
-    """Auf die gewaehlte Version wechseln und den Dienst neu starten (systemd startet ihn wieder)."""
+    """Auf die gewaehlte Version wechseln und den Dienst neu starten (systemd startet ihn wieder).
+
+    Mit target=peer wird der Partner-Pi umgestellt (ueber dessen Knoten-Dienst, Port 2000)."""
     body = request.get_json(silent=True) or {}
     tag = str(body.get("tag", ""))
+    peer = body.get("target") == "peer"
     if pi_update.parse_tag(tag) is None:
         return jsonify({"ok": False, "error": "Ungueltige Version"}), 400
-    if not pi_update.available():
+    if not peer and not pi_update.available():
         return jsonify({"ok": False, "error": "Kein Git-Checkout"}), 400
     st = load_state()
     if _run_in_progress(st):
         return jsonify({"ok": False, "error": "Ein Lauf laeuft gerade"}), 409
     if _competition_started(st) and str(body.get("confirm", "")) != OTA_CONFIRM_TEXT:
         return jsonify({"ok": False, "error": "locked", "confirm_text": OTA_CONFIRM_TEXT}), 409
+    if peer:
+        try:
+            result = node_info.peer_call("/pi-update", {"tag": tag}, timeout=300)
+        except RuntimeError as exc:
+            logger.error("Pi-Update des Partners auf %s fehlgeschlagen: %s", tag, exc)
+            return jsonify({"ok": False, "error": str(exc)}), 500
+        logger.warning("Partner-Pi auf %s gewechselt", tag)
+        return jsonify({"ok": True, "tag": tag, "commit": result.get("commit"), "restarting": False, "peer": True})
     try:
         commit = pi_update.switch_to(tag)
     except Exception as exc:

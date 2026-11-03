@@ -12,4 +12,8 @@ if [ -z "$IP" ]; then
   echo "Keine IPv4-Adresse auf $LAN_IF gefunden." >&2
   exit 1
 fi
+# Avahi neu starten: leert den Zwischenspeicher. Sonst haelt der Pi den Eintrag des ausgefallenen Partners
+# (bis zu 2 Minuten) fuer eine Namenskollision und der Name wird erst viel spaeter frei.
+systemctl restart avahi-daemon
+sleep 1
 exec avahi-publish-address -R "$NAME" "$IP"

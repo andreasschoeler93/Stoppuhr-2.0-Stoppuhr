@@ -24,16 +24,35 @@ def parse_tag(tag: str) -> Optional[tuple[int, int, int]]:
     return (int(m.group(1)), int(m.group(2)), int(m.group(3))) if m else None
 
 
-def _git(*args: str, timeout: int = 20) -> str:
+def _owner_kwargs() -> dict[str, Any]:
+    """Laeuft der Dienst als root (stoppuhr-knoten), Git und pip als Besitzer des Checkouts ausfuehren,
+    damit keine root-eigenen Dateien im Repository entstehen."""
+    if not hasattr(os, "geteuid") or os.geteuid() != 0:
+        return {}
+    st = os.stat(REPO_DIR)
+    if st.st_uid == 0:
+        return {}
+    try:
+        import pwd
+
+        home = pwd.getpwuid(st.st_uid).pw_dir
+    except (ImportError, KeyError):
+        home = REPO_DIR
+    return {"user": st.st_uid, "group": st.st_gid, "home": home}
+
+
+def _run(cmd: list[str], timeout: int) -> subprocess.CompletedProcess[str]:
+    owner = _owner_kwargs()
     env = {**os.environ, "GIT_TERMINAL_PROMPT": "0"}
-    res = subprocess.run(
-        ["git", "-C", REPO_DIR, *args],
-        capture_output=True,
-        text=True,
-        timeout=timeout,
-        env=env,
-        check=False,
-    )
+    kwargs: dict[str, Any] = {}
+    if owner:
+        env["HOME"] = owner["home"]
+        kwargs = {"user": owner["user"], "group": owner["group"]}
+    return subprocess.run(cmd, capture_output=True, text=True, timeout=timeout, env=env, check=False, **kwargs)
+
+
+def _git(*args: str, timeout: int = 20) -> str:
+    res = _run(["git", "-C", REPO_DIR, *args], timeout)
     if res.returncode != 0:
         raise RuntimeError((res.stderr or res.stdout).strip() or f"git {args[0]} fehlgeschlagen")
     return res.stdout.strip()
@@ -62,10 +81,10 @@ def current() -> dict[str, Optional[str]]:
     return info
 
 
-def list_tags(refresh: bool = True) -> tuple[list[str], Optional[str]]:
+def list_tags(refresh: bool = True, force: bool = False) -> tuple[list[str], Optional[str]]:
     """Versions-Tags (neueste zuerst) und ggf. Fehlertext vom Abholen (dann nur lokale Tags)."""
     error = _fetch["error"]
-    if refresh and time.time() - _fetch["ts"] >= FETCH_TTL_S:
+    if refresh and (force or time.time() - _fetch["ts"] >= FETCH_TTL_S):
         try:
             _git("fetch", "--tags", "--quiet", "origin", timeout=30)
             error = None
@@ -86,13 +105,7 @@ def switch_to(tag: str) -> str:
     requirements = os.path.join(REPO_DIR, "deploy", "requirements.txt")
     try:
         if os.path.isfile(requirements):
-            res = subprocess.run(
-                [sys.executable, "-m", "pip", "install", "-q", "-r", requirements],
-                capture_output=True,
-                text=True,
-                timeout=240,
-                check=False,
-            )
+            res = _run([sys.executable, "-m", "pip", "install", "-q", "-r", requirements], 240)
             if res.returncode != 0:
                 raise RuntimeError("Abhaengigkeiten: " + (res.stderr or res.stdout).strip()[-200:])
     except (RuntimeError, subprocess.SubprocessError, OSError):

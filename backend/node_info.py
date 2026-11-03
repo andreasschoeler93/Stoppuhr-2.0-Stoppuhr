@@ -12,6 +12,7 @@ import os
 import socket
 import subprocess
 import time
+import urllib.error
 import urllib.request
 from typing import Any, Optional
 
@@ -19,9 +20,22 @@ import psutil
 import redis
 
 import node_names
+import pi_update
 
 NODE_PORT = int(os.environ.get("NODE_PORT", "2000"))
 ROLE_FILE = os.environ.get("ROLE_CHANGE_FILE", "/var/lib/stoppuhr-rollenwechsel")
+_git_cache: dict[str, Any] = {"ts": 0.0, "value": {}}
+
+
+def _git_current() -> dict[str, Optional[str]]:
+    if time.time() - _git_cache["ts"] > 30:
+        _git_cache["value"] = pi_update.current()
+        _git_cache["ts"] = time.time()
+    return _git_cache["value"]
+
+
+def invalidate_git_cache() -> None:
+    _git_cache["ts"] = 0.0
 
 
 def _run(cmd: list[str]) -> str:
@@ -106,6 +120,7 @@ def collect() -> dict[str, Any]:
         "wifi_ssid": _wifi_ssid(),
         "wifi_applied_ver": _wifi_applied(),
         "names_applied_ver": node_names.applied_version(),
+        "git": _git_current(),
         "uptime_s": int(time.time() - psutil.boot_time()),
         "cpu_percent": psutil.cpu_percent(interval=None),
         "cpu_temp": _cpu_temp(),
@@ -132,6 +147,31 @@ def fetch_peer() -> dict[str, Any]:
         return data
     except Exception:
         return {"reachable": False, "configured": True, "peer_ip": peer}
+
+
+def peer_call(path: str, payload: Optional[dict[str, Any]] = None, timeout: float = 5.0) -> dict[str, Any]:
+    """Anfrage an den Knoten-Dienst des Partners (GET, mit payload POST). Wirft bei Fehlern."""
+    peer = os.environ.get("PEER_IP")
+    if not peer:
+        raise RuntimeError("Kein Partner-Pi eingerichtet")
+    data = json.dumps(payload).encode("utf-8") if payload is not None else None
+    req = urllib.request.Request(
+        f"http://{peer}:{NODE_PORT}{path}",
+        data=data,
+        headers={"Content-Type": "application/json"} if data is not None else {},
+        method="POST" if data is not None else "GET",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            return json.loads(resp.read().decode("utf-8"))
+    except urllib.error.HTTPError as exc:
+        try:
+            detail = json.loads(exc.read().decode("utf-8")).get("error")
+        except Exception:
+            detail = None
+        raise RuntimeError(detail or f"Partner-Pi antwortet mit {exc.code}") from exc
+    except Exception as exc:
+        raise RuntimeError(f"Partner-Pi nicht erreichbar: {exc}") from exc
 
 
 def cluster_status() -> dict[str, Any]:

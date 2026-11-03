@@ -1,7 +1,7 @@
 [Unit]
 Description=Gemeinsamer Name (z. B. stoppuhr.local) zeigt auf den arbeitenden Pi
 After=avahi-daemon.service
-Requires=avahi-daemon.service
+Wants=avahi-daemon.service
 
 [Service]
 User=root
