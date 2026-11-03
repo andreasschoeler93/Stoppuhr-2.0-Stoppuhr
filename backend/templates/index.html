@@ -170,10 +170,10 @@
       <div id="setupSettingsSlot">
       <div id="setupSteps">
       <div class="alert alert-info d-none" id="setupFrontHint" role="status">
-        Es ist noch kein Lauf geladen. Richte zuerst die beiden Schritte ein. Diese Ansicht verschwindet,
-        sobald ein Lauf geladen ist oder 10 Sekunden nachdem du in Schritt 2 auf „Kopieren“ geklickt hast.
+        Es ist noch kein Lauf geladen. Richte zuerst die beiden Schritte ein. Nach erfolgreichem Laden der Startkarten
+        verschwindet Schritt 1; Schritt 2 bleibt 10 Sekunden stehen oder bis du auf „Kopieren“ klickst.
       </div>
-      <div class="card setup-card mb-3">
+      <div class="card setup-card mb-3" id="setupStep1">
         <div class="card-body">
           <div class="d-flex align-items-center gap-2 mb-2">
             <span class="setup-step">1</span>
@@ -216,7 +216,7 @@
         </div>
       </div>
 
-      <div class="card setup-card mb-3">
+      <div class="card setup-card mb-3" id="setupStep2">
         <div class="card-body">
           <div class="d-flex align-items-center gap-2 mb-2">
             <span class="setup-step">2</span>

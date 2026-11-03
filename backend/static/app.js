@@ -945,6 +945,7 @@ async function loadStartcardsFromBackend() {
 }
 
 // Solange kein Lauf geladen ist, stehen die Einrichtungsschritte vorne auf der Stoppuhr-Seite.
+// Nach erfolgreichem Laden der Startkarten entfällt Schritt 1; Schritt 2 bleibt noch 10 s stehen.
 let setupDismissed = false;
 let setupHideTimer = null;
 
@@ -952,16 +953,29 @@ function setupShownInFront() {
   return byId("setupSteps").parentElement === byId("setupHomeSlot");
 }
 
+function dismissSetupFront() {
+  clearTimeout(setupHideTimer);
+  setupHideTimer = null;
+  setupDismissed = true;
+  updateSetupPlacement();
+}
+
 function updateSetupPlacement() {
-  const front = !(startcards.runs || []).length && !setupDismissed;
+  const hasRuns = (startcards.runs || []).length > 0;
+  const front = !setupDismissed && (!hasRuns || setupShownInFront());
   const target = byId(front ? "setupHomeSlot" : "setupSettingsSlot");
   const steps = byId("setupSteps");
   if (steps.parentElement !== target) target.appendChild(steps);
-  byId("setupFrontHint").classList.toggle("d-none", !front);
+  byId("setupFrontHint").classList.toggle("d-none", !front || hasRuns);
+  byId("setupStep1").classList.toggle("d-none", front && hasRuns);
+  if (front && hasRuns && !setupHideTimer) {
+    setupHideTimer = setTimeout(dismissSetupFront, 10000);
+  }
 }
 
 function resetSetupPlacement() {
   clearTimeout(setupHideTimer);
+  setupHideTimer = null;
   setupDismissed = false;
   updateSetupPlacement();
 }
@@ -1987,8 +2001,7 @@ async function init() {
     const msg = byId("alphaCopiedMsg");
     msg.classList.remove("d-none");
     setTimeout(() => msg.classList.add("d-none"), 2000);
-    clearTimeout(setupHideTimer);
-    setupHideTimer = setTimeout(() => { setupDismissed = true; updateSetupPlacement(); }, 10000);
+    dismissSetupFront();
   });
 }
 

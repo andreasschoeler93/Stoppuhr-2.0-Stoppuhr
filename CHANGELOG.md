@@ -5,6 +5,7 @@ Jede Version ist als Git-Tag `vX.Y.Z` markiert und kann in der Weboberfläche un
 
 | Version | Datum | Änderung |
 |---|---|---|
+| v0.26.1 | 2026-11-03 | Einrichtung vorne: Nach erfolgreichem Laden der Startkarten verschwindet Schritt 1, Schritt 2 bleibt 10 Sekunden stehen oder wird sofort mit „Kopieren“ ausgeblendet. |
 | v0.26.0 | 2026-11-03 | Solange noch kein Lauf geladen ist, stehen die beiden Einrichtungsschritte vorne auf der Stoppuhr-Seite vor „Lauf wählen“. Sie wandern zurück in die Einstellungen, sobald ein Lauf geladen ist oder 10 Sekunden nach „Kopieren“ in Schritt 2. |
 | v0.25.0 | 2026-11-03 | JAuswertung-Einrichtung korrigiert: IP, eigener HTTP-Port und Startkarten-Pfad in Schritt 1; Stoppuhr-IP für „AlphaServer Server“ in Schritt 2. Wettkampf beenden dauerhaft sichtbar. Einzelwecken je Ladeplatz mit Ladekoffer-Firmware v0.6.0. Nicht mehr benötigte Docker-Entwicklungsdateien entfernt. |
 | v0.24.0 | 2026-11-03 | JAuswertung-Einrichtung in zwei Schritte gegliedert (HTTP-Server über die Weltkugel aktivieren, danach Startkarten für die elektronische Zeitnahme verbinden). Einzelwecken belegter Ladeplätze: Server-Befehl mit Quittierung und Ladekoffer-Firmware v0.6.0; Wettkampf beenden bleibt geöffnet direkt vor den ganz unten stehenden Experteneinstellungen. |
