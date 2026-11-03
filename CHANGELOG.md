@@ -5,6 +5,7 @@ Jede Version ist als Git-Tag `vX.Y.Z` markiert und kann in der Weboberfläche un
 
 | Version | Datum | Änderung |
 |---|---|---|
+| v0.25.0 | 2026-11-03 | JAuswertung-Einrichtung korrigiert: IP, eigener HTTP-Port und Startkarten-Pfad in Schritt 1; Stoppuhr-IP für „AlphaServer Server“ in Schritt 2. Wettkampf beenden dauerhaft sichtbar. Einzelwecken je Ladeplatz mit Ladekoffer-Firmware v0.6.0. Nicht mehr benötigte Docker-Entwicklungsdateien entfernt. |
 | v0.24.0 | 2026-11-03 | JAuswertung-Einrichtung in zwei Schritte gegliedert (HTTP-Server über die Weltkugel aktivieren, danach Startkarten für die elektronische Zeitnahme verbinden). Einzelwecken belegter Ladeplätze: Server-Befehl mit Quittierung und Ladekoffer-Firmware v0.6.0; Wettkampf beenden bleibt geöffnet direkt vor den ganz unten stehenden Experteneinstellungen. |
 | v0.23.0 | 2026-11-02 | Oberfläche auf vier Seiten geordnet; JAuswertung-Startkarten-Einrichtung und Laden aus der Stoppuhr ausgelagert, Einstellungen in aufklappbare Expertenkapitel gegliedert, Client-IP zur Übernahme angeboten. Systemstatus unter Vitaldaten verschoben; Koffer-Temperatur/-Luftfeuchte mit 48-h-Verlauf und Archivierung ergänzt, Feuchteskala fest auf 0–100 %. Koffer-Statusmeldungen werden bei Redis-Ausfall weiterhin angenommen. |
 | v0.22.0 | 2026-10-31 | Vitaldaten-Tab: neue Zeile „Online seit“ je Taster (Uhrzeit und Dauer). Eine Lücke von mehr als 30 s startet die Online-Phase neu. |
