@@ -76,6 +76,9 @@
   <div class="tab-content">
     <!-- TAB: Stoppuhr -->
     <div class="tab-pane fade show active" id="home" role="tabpanel">
+      <!-- Die Einrichtungsschritte (#setupSteps) wandern per Skript hierher, solange noch kein Lauf geladen ist -->
+      <div id="setupHomeSlot"></div>
+
       <!-- Lauf -->
       <div class="card mb-3">
         <div class="card-body py-2">
@@ -164,6 +167,12 @@
 
     <!-- TAB: Einstellungen -->
     <div class="tab-pane fade" id="settings" role="tabpanel">
+      <div id="setupSettingsSlot">
+      <div id="setupSteps">
+      <div class="alert alert-info d-none" id="setupFrontHint" role="status">
+        Es ist noch kein Lauf geladen. Richte zuerst die beiden Schritte ein. Diese Ansicht verschwindet,
+        sobald ein Lauf geladen ist oder 10 Sekunden nachdem du in Schritt 2 auf „Kopieren“ geklickt hast.
+      </div>
       <div class="card setup-card mb-3">
         <div class="card-body">
           <div class="d-flex align-items-center gap-2 mb-2">
@@ -228,6 +237,8 @@
             <span class="text-success d-none" id="alphaCopiedMsg">Kopiert.</span>
           </div>
         </div>
+      </div>
+      </div>
       </div>
 
       <div class="card mb-3">

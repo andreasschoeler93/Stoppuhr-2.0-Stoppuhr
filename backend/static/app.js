@@ -941,6 +941,29 @@ async function loadStartcardsFromBackend() {
   updateRunSelect(sc.runs || []);
   renderLanesTable();
   updateStartcardsStatusLine();
+  updateSetupPlacement();
+}
+
+// Solange kein Lauf geladen ist, stehen die Einrichtungsschritte vorne auf der Stoppuhr-Seite.
+let setupDismissed = false;
+let setupHideTimer = null;
+
+function setupShownInFront() {
+  return byId("setupSteps").parentElement === byId("setupHomeSlot");
+}
+
+function updateSetupPlacement() {
+  const front = !(startcards.runs || []).length && !setupDismissed;
+  const target = byId(front ? "setupHomeSlot" : "setupSettingsSlot");
+  const steps = byId("setupSteps");
+  if (steps.parentElement !== target) target.appendChild(steps);
+  byId("setupFrontHint").classList.toggle("d-none", !front);
+}
+
+function resetSetupPlacement() {
+  clearTimeout(setupHideTimer);
+  setupDismissed = false;
+  updateSetupPlacement();
 }
 
 function updateStartcardsStatusLine() {
@@ -1644,7 +1667,7 @@ async function init() {
   } catch {}
 
   await loadSettingsIntoUI();
-  await loadStartcardsFromBackend().catch(() => updateStartcardsStatusLine());
+  await loadStartcardsFromBackend().catch(() => { updateStartcardsStatusLine(); updateSetupPlacement(); });
   loadClientIp().catch(e => showClientIpError(e.message));
 
   byId("laufSelect").addEventListener("change", (e) => {
@@ -1810,7 +1833,7 @@ async function init() {
       byId("maxLaneLabel").textContent = String(maxLane);
       updateRunSelect([]);
       updateStartcardsStatusLine();
-      await Promise.all([loadButtons(), loadRunStatus()]);
+      resetSetupPlacement();
       alert(`Wettkampf beendet${result.archive_id ? " und im Archiv gespeichert" : ""}. Der Abschaltbefehl ist ${result.shutdown_grace_s} Sekunden aktiv.`);
     } catch (e) {
       alert("Wettkampf konnte nicht beendet werden: " + e.message);
@@ -1905,6 +1928,9 @@ async function init() {
     currentRun = serverRun;
     renderLanesTable();
   }
+  setInterval(() => {
+    if (setupShownInFront()) loadStartcardsFromBackend().catch(() => {});
+  }, 3000);
   setInterval(() => { loadRunStatus().catch(() => {}); }, 250);
   setInterval(updateClocks, 50);
   // Taster-Liste regelmaessig aktualisieren (nicht waehrend Drag&Drop)
@@ -1961,6 +1987,8 @@ async function init() {
     const msg = byId("alphaCopiedMsg");
     msg.classList.remove("d-none");
     setTimeout(() => msg.classList.add("d-none"), 2000);
+    clearTimeout(setupHideTimer);
+    setupHideTimer = setTimeout(() => { setupDismissed = true; updateSetupPlacement(); }, 10000);
   });
 }
 

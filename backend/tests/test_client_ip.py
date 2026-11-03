@@ -38,6 +38,8 @@ class ClientIpTests(unittest.TestCase):
         self.assertEqual(targets, ["#home", "#vitals", "#archive", "#settings"])
         self.assertIn('id="btnUseClientIp"', html)
         self.assertIn('id="btnReloadStartcards"', html)
+        self.assertLess(html.index('id="setupHomeSlot"'), html.index('id="laufSelect"'))
+        self.assertIn('id="setupSettingsSlot"', html)
         self.assertIn('<section id="status"', html)
 
 
