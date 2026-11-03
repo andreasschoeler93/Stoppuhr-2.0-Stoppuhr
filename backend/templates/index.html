@@ -73,9 +73,9 @@
     </li>
     <li class="nav-item" role="presentation">
       <button class="nav-link" id="settings-tab" data-bs-toggle="tab" data-bs-target="#settings" type="button" role="tab">
-        Einstellungen
-      </button>
-    </li>
+        Einstellungen <span class="badge text-bg-warning d-none" id="updateBadge" title="Updates verfügbar">●</span>
+              </button>
+            </li>
   </ul>
 
   <div class="tab-content">
@@ -473,26 +473,34 @@
 
           <details class="mb-3">
             <summary class="settings-summary">Software und Firmware</summary>
+            <div class="alert alert-warning py-2 small d-none" id="updateHints"></div>
             <div class="card mt-2 mb-3" id="piUpdateCard">
         <div class="card-body">
           <h2 class="h6 mb-2">Pi-Software</h2>
-          <div class="small mb-2">Läuft: <strong id="piCurrent">–</strong></div>
-          <div class="row g-2 align-items-end">
-            <div class="col-md-4 d-none" id="piTargetWrap">
-              <label class="form-label" for="piTarget">Pi</label>
-              <select id="piTarget" class="form-select"></select>
+          <div class="row g-3">
+            <div class="col-md-6" id="piCol_self">
+              <div class="border rounded p-2 h-100">
+                <div class="fw-semibold" id="piTitle_self">Dieser Pi</div>
+                <div class="small mb-2">Läuft: <strong id="piCurrent_self">–</strong> <span class="badge text-bg-warning d-none" id="piNew_self"></span></div>
+                <label class="form-label" for="piSelect_self">Version</label>
+                <select id="piSelect_self" class="form-select form-select-sm mb-2"></select>
+                <button class="btn btn-primary btn-sm" id="btnPiDeploy_self">Übernehmen und neu starten</button>
+                <div class="text-danger small d-none" id="piError_self"></div>
+              </div>
             </div>
-            <div class="col-md-4">
-              <label class="form-label" for="piSelect">Version</label>
-              <select id="piSelect" class="form-select"></select>
-            </div>
-            <div class="col-md-4 d-flex gap-2">
-              <button class="btn btn-primary btn-sm" id="btnPiDeploy">Übernehmen und neu starten</button>
-              <button class="btn btn-outline-secondary btn-sm" id="btnPiReload">Neu laden</button>
+            <div class="col-md-6 d-none" id="piCol_peer">
+              <div class="border rounded p-2 h-100">
+                <div class="fw-semibold" id="piTitle_peer">Partner-Pi</div>
+                <div class="small mb-2">Läuft: <strong id="piCurrent_peer">–</strong> <span class="badge text-bg-warning d-none" id="piNew_peer"></span></div>
+                <label class="form-label" for="piSelect_peer">Version</label>
+                <select id="piSelect_peer" class="form-select form-select-sm mb-2"></select>
+                <button class="btn btn-primary btn-sm" id="btnPiDeploy_peer">Übernehmen und neu starten</button>
+                <div class="text-danger small d-none" id="piError_peer"></div>
+              </div>
             </div>
           </div>
-          <div class="form-text">Wechselt nur den gewählten Pi. Dessen Dienst ist danach kurz (ca. 5 s) nicht erreichbar. Nie während eines laufenden Laufs.</div>
-          <div class="text-danger small d-none" id="piError"></div>
+          <div class="mt-2"><button class="btn btn-outline-secondary btn-sm" id="btnPiReload">Neu laden</button></div>
+          <div class="form-text">Wechselt nur den jeweiligen Pi. Dessen Dienst ist danach kurz (ca. 5 s) nicht erreichbar. Nie während eines laufenden Laufs.</div>
           <div class="text-danger small d-none" id="piLocked">Der Wettkampf läuft bereits. Ein Wechsel ist nur mit ausdrücklicher Bestätigung möglich.</div>
         </div>
             </div>

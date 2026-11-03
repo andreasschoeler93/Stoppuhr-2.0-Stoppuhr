@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import socket
 import subprocess
 import time
@@ -36,6 +37,17 @@ def _git_current() -> dict[str, Optional[str]]:
 
 def invalidate_git_cache() -> None:
     _git_cache["ts"] = 0.0
+
+
+def app_version() -> Optional[str]:
+    """Version der auf diesem Pi installierten Software (aus app.py, da der Knoten-Dienst app.py nicht importiert)."""
+    try:
+        path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "app.py")
+        with open(path, encoding="utf-8") as fh:
+            m = re.search(r'^APP_VERSION[^=]*=\s*"([^"]+)"', fh.read(), re.M)
+        return m.group(1) if m else None
+    except OSError:
+        return None
 
 
 def _run(cmd: list[str]) -> str:
@@ -121,6 +133,7 @@ def collect() -> dict[str, Any]:
         "wifi_applied_ver": _wifi_applied(),
         "names_applied_ver": node_names.applied_version(),
         "git": _git_current(),
+        "app_version": app_version(),
         "uptime_s": int(time.time() - psutil.boot_time()),
         "cpu_percent": psutil.cpu_percent(interval=None),
         "cpu_temp": _cpu_temp(),

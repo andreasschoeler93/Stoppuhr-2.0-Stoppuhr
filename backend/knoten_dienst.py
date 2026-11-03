@@ -37,7 +37,7 @@ class Handler(BaseHTTPRequestHandler):
                 self._json(403, {"error": "Nicht erlaubt"})
                 return
             try:
-                tags, error = pi_update.list_tags(force=True)
+                tags, error = pi_update.list_tags()
                 self._json(200, {"tags": tags, "error": error, "supported": pi_update.available(),
                                  "current": pi_update.current()})
             except Exception as exc:
