@@ -12,6 +12,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import redis
 
+import deploy_sync
 import node_info
 import node_names
 import pi_update
@@ -139,7 +140,35 @@ def names_loop() -> None:
             print(f"Namen-Abgleich: {exc}", flush=True)
 
 
+def system_loop() -> None:
+    """Haelt installierte Skripte aktuell, startet nach einem Versionswechsel neu und pflegt den gemeinsamen Namen."""
+    try:
+        started_commit = pi_update._git("rev-parse", "HEAD")
+    except Exception:
+        started_commit = None
+    synced = False
+    while True:
+        try:
+            if deploy_sync.installed():
+                if not synced:
+                    deploy_sync.sync_files()
+                    synced = True
+                vip = os.environ.get("VIP")
+                has_vip = bool(vip) and any(vip in v.split(", ") for v in node_info._ipv4_addresses().values())
+                deploy_sync.ensure_alias(has_vip)
+            current = pi_update._git("rev-parse", "HEAD") if started_commit else None
+            if started_commit and current != started_commit:
+                # Neue Version ausgecheckt: Skripte abgleichen und mit dem neuen Code neu starten
+                deploy_sync.sync_files()
+                print("Neue Version erkannt, Knoten-Dienst startet neu", flush=True)
+                os._exit(0)
+        except Exception as exc:  # der Dienst darf wegen eines Fehlers hier nie enden
+            print(f"Systemabgleich: {exc}", flush=True)
+        time.sleep(10)
+
+
 if __name__ == "__main__":
     threading.Thread(target=wlan_loop, daemon=True).start()
     threading.Thread(target=names_loop, daemon=True).start()
+    threading.Thread(target=system_loop, daemon=True).start()
     ThreadingHTTPServer(("0.0.0.0", node_info.NODE_PORT), Handler).serve_forever()

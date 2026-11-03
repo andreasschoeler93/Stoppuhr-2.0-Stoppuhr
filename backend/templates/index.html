@@ -11,6 +11,8 @@
     .nav-tabs .nav-link.active { font-weight: 600; }
     .settings-summary { cursor: pointer; font-weight: 600; padding: .7rem .9rem; border: 1px solid #dee2e6; border-radius: .375rem; background: #fff; }
     details[open] > .settings-summary { margin-bottom: .5rem; }
+    .settings-group { font-size: .75rem; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: #6c757d; margin: .25rem 0 .4rem; }
+    .settings-summary:has(.badge:not(.d-none)) { border-color: #ffc107; background: #fff8e1; }
     .setup-card { border-left: .25rem solid #0d6efd; }
     .setup-step { display: inline-flex; align-items: center; justify-content: center; width: 1.75rem; height: 1.75rem; border-radius: 50%; background: #0d6efd; color: #fff; font-weight: 700; }
     .wake-slot-grid { display: grid; grid-template-columns: repeat(10, minmax(0, 1fr)); gap: .5rem; }
@@ -273,8 +275,10 @@
       </div>
 
       <details class="mb-3">
-        <summary class="settings-summary">Experteneinstellungen</summary>
+        <summary class="settings-summary">Experteneinstellungen <span class="badge text-bg-warning ms-2 d-none update-badge">Updates verfügbar</span></summary>
         <div class="pt-3">
+          <div class="settings-group">Betrieb</div>
+
           <details class="mb-3">
             <summary class="settings-summary">Lauf- und Tasterverhalten</summary>
             <div class="card mt-2">
@@ -385,6 +389,39 @@
             </div>
           </details>
 
+          <details class="mb-3">
+            <summary class="settings-summary">JAuswertung: Live-Export und Hinweise</summary>
+            <div class="card mt-2 mb-3">
+              <div class="card-body">
+                <div class="d-flex justify-content-between align-items-center mb-2">
+                  <h2 class="h6 mb-0">Export für JAuswertung (live)</h2>
+                  <button class="btn btn-outline-secondary btn-sm" type="button" id="btnToggleExport">Live-Ansicht öffnen</button>
+                </div>
+                <div id="exportView" class="d-none">
+                  <div class="text-muted small mb-2" id="exportInfo"></div>
+                  <div class="table-responsive" style="max-height: 320px; overflow:auto;">
+                    <table class="table table-sm table-striped mb-2">
+                      <thead><tr><th>Wettkampf</th><th>Lauf</th><th>Bahn</th><th>Zeit</th><th>ms</th></tr></thead>
+                      <tbody id="exportRows"></tbody>
+                    </table>
+                  </div>
+                  <details>
+                    <summary class="small">Rohes XML</summary>
+                    <pre class="small mb-0" style="max-height: 240px; overflow:auto;" id="exportRaw"></pre>
+                  </details>
+                </div>
+              </div>
+            </div>
+            <div class="card mt-2">
+              <div class="card-body text-muted small">
+                Die Startkarten werden bewusst <strong>nicht automatisch</strong> neu geladen.
+                Nur über <em>„Startkarten laden“</em> oder nach Änderung der Einstellungen.
+              </div>
+            </div>
+          </details>
+
+          <div class="settings-group">Netzwerk</div>
+
           <details class="mb-3 d-none" id="namesSection">
             <summary class="settings-summary">Namen der Pis</summary>
             <div class="card mt-2">
@@ -452,6 +489,8 @@
             </div>
           </details>
 
+          <div class="settings-group">System</div>
+
           <details class="mb-3">
             <summary class="settings-summary">Zugang zur Oberfläche</summary>
             <div class="card mt-2" id="accountCard">
@@ -472,7 +511,7 @@
           </details>
 
           <details class="mb-3">
-            <summary class="settings-summary">Software und Firmware</summary>
+            <summary class="settings-summary">Software und Firmware <span class="badge text-bg-warning ms-2 d-none" id="updateSummaryBadge">Updates verfügbar</span></summary>
             <div class="alert alert-warning py-2 small d-none" id="updateHints"></div>
             <div class="card mt-2 mb-3" id="piUpdateCard">
         <div class="card-body">
@@ -555,37 +594,6 @@
             <tbody id="fwTasters"></tbody>
           </table>
         </div>
-            </div>
-          </details>
-
-          <details class="mb-3">
-            <summary class="settings-summary">JAuswertung: Live-Export und Hinweise</summary>
-            <div class="card mt-2 mb-3">
-              <div class="card-body">
-                <div class="d-flex justify-content-between align-items-center mb-2">
-                  <h2 class="h6 mb-0">Export für JAuswertung (live)</h2>
-                  <button class="btn btn-outline-secondary btn-sm" type="button" id="btnToggleExport">Live-Ansicht öffnen</button>
-                </div>
-                <div id="exportView" class="d-none">
-                  <div class="text-muted small mb-2" id="exportInfo"></div>
-                  <div class="table-responsive" style="max-height: 320px; overflow:auto;">
-                    <table class="table table-sm table-striped mb-2">
-                      <thead><tr><th>Wettkampf</th><th>Lauf</th><th>Bahn</th><th>Zeit</th><th>ms</th></tr></thead>
-                      <tbody id="exportRows"></tbody>
-                    </table>
-                  </div>
-                  <details>
-                    <summary class="small">Rohes XML</summary>
-                    <pre class="small mb-0" style="max-height: 240px; overflow:auto;" id="exportRaw"></pre>
-                  </details>
-                </div>
-              </div>
-            </div>
-            <div class="card mt-2">
-              <div class="card-body text-muted small">
-                Die Startkarten werden bewusst <strong>nicht automatisch</strong> neu geladen.
-                Nur über <em>„Startkarten laden“</em> oder nach Änderung der Einstellungen.
-              </div>
             </div>
           </details>
         </div>

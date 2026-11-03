@@ -942,6 +942,11 @@ async function updateHintsRefresh() {
   }
   box.classList.toggle("d-none", !hints.length);
   byId("updateBadge").classList.toggle("d-none", !hints.length);
+  const summaryText = hints.length === 1 ? "1 Update verfügbar" : `${hints.length} Updates verfügbar`;
+  for (const el of [byId("updateSummaryBadge"), ...document.querySelectorAll(".update-badge")]) {
+    el.classList.toggle("d-none", !hints.length);
+    el.textContent = summaryText;
+  }
 }
 
 async function refreshPiUpdate() {
