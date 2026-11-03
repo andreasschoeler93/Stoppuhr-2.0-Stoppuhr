@@ -1,6 +1,6 @@
 # ----------------------------------------
 # Stoppuhr Webserver
-# Version: v0.26.1
+# Version: v0.27.0
 # Status: stable-beta
 # ----------------------------------------
 
@@ -38,10 +38,11 @@ import pi_update
 import vitals_history
 import finish as finish_module
 import wifi_config
+import node_names
 from xml_writer import create_xml_heats
 
 
-APP_VERSION: Final[str] = "0.26.1"
+APP_VERSION: Final[str] = "0.27.0"
 DEFAULT_PORT: Final[int] = 1999  # Since JAuswertung expected this port
 EXIT_ERROR: Final[int] = 1
 STATE_KEY: Final[str] = "STATE"
@@ -397,7 +398,7 @@ def _require_login() -> Optional[ResponseReturnValue]:
 _STATE_LOCK: Final = threading.RLock()
 _STATE_LOCK_TIMEOUT_S: Final[int] = 10
 _UNLOCKED_PREFIXES: Final[tuple[str, ...]] = (
-    "/api/startcards/reload", "/api/pi-update", "/api/cluster", "/api/system-status", "/api/wifi-config",
+    "/api/startcards/reload", "/api/pi-update", "/api/cluster", "/api/system-status", "/api/wifi-config", "/api/node-names",
     "/api/firmware/releases", "/api/firmware/deploy", "/api/firmware/download",
     "/api/charger/firmware", "/api/charger-firmware", "/api/vitals/pi", "/api/vitals/history",
     "/api/archive",
@@ -517,7 +518,11 @@ def api_auth_change() -> ResponseReturnValue:
 
 @app.get("/")
 def index() -> str:
-    return render_template("index.html", version=APP_VERSION)
+    # Bad-Pi färbt die Oberfläche anders ein; nur bekannte Rollen zulassen
+    node_kind = os.environ.get("ROLLE", "")
+    if node_kind not in ("koffer", "bad"):
+        node_kind = ""
+    return render_template("index.html", version=APP_VERSION, node_kind=node_kind)
 
 
 @app.get("/simulator")
@@ -1662,6 +1667,49 @@ def api_wifi_config_force():
         return jsonify({"ok": False, "error": "Keine WLAN-Daten gespeichert"}), 400
     wifi_config.set_force(redis_store)
     return jsonify({"ok": True})
+
+
+@app.get("/api/node-names")
+def api_node_names_get():
+    """Namen der beiden Pis und der gemeinsamen Adresse samt Stand der Umstellung je Pi."""
+    try:
+        cfg = node_names.load(redis_store)
+    except redis.RedisError:
+        cfg = None
+    names = node_names.effective(cfg)
+    cluster = node_info.cluster_status()
+    pis = [n for n in (cluster.get("self"), cluster.get("peer")) if n and n.get("reachable")]
+    return jsonify({
+        "names": names,
+        "defaults": node_names.DEFAULTS,
+        "configured": cfg is not None,
+        "version": (cfg or {}).get("version", 0),
+        "two_pi": bool(cluster.get("two_pi")),
+        "own_kind": (cluster.get("self") or {}).get("kind", ""),
+        "pis": [
+            {"hostname": n.get("hostname"), "kind": n.get("kind"), "applied_ver": n.get("names_applied_ver", 0)}
+            for n in pis
+        ],
+    })
+
+
+@app.post("/api/node-names")
+def api_node_names_set():
+    """Neue Namen speichern; jeder Pi stellt sich innerhalb weniger Sekunden um."""
+    body = request.get_json(silent=True) or {}
+    names = node_names.normalize(body)
+    problem = node_names.validate(names)
+    if problem:
+        return jsonify({"ok": False, "error": problem}), 400
+    try:
+        old = node_names.load(redis_store)
+        if node_names.effective(old) == names and old:
+            return jsonify({"ok": False, "error": "Keine Aenderung"}), 400
+        cfg = node_names.save(redis_store, names)
+    except redis.ReadOnlyError:
+        return jsonify({"ok": False, "error": "Dieser Pi ist gerade nur Kopie (Redis schreibgeschützt)"}), 503
+    logger.warning("Neue Pi-Namen gespeichert (Fassung %s)", cfg["version"])
+    return jsonify({"ok": True, "version": cfg["version"]})
 
 
 @app.get("/api/firmware/releases")

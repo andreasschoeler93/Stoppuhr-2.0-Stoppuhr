@@ -622,6 +622,8 @@ async function waitForChargerWake(requestId) {
 // -----------------------------
 let wifiInfo = null;
 let wifiFilled = false;
+let namesInfo = null;
+let namesFilled = false;
 
 function showError(id, text) {
   const el = byId(id);
@@ -708,6 +710,53 @@ async function saveWifi() {
   byId("wifiPsk1").value = "";
   byId("wifiPsk2").value = "";
   await refreshWifi().catch(() => {});
+}
+
+async function refreshNames() {
+  const i = await apiGet("/api/node-names");
+  byId("namesSection").classList.toggle("d-none", !i.two_pi);
+  if (!i.two_pi) return;
+  namesInfo = i;
+  // Felder nur beim ersten Laden befuellen, damit Eingaben nicht ueberschrieben werden
+  if (!namesFilled) {
+    byId("nameKoffer").value = i.names.koffer;
+    byId("nameBad").value = i.names.bad;
+    byId("nameShared").value = i.names.shared;
+    namesFilled = true;
+  }
+  const lines = i.configured
+    ? i.pis.map(p => `Pi ${escapeHtml(p.hostname || "")}: ${p.applied_ver >= i.version ? "umgestellt" : "wird umgestellt …"}`)
+    : ["Noch keine eigenen Namen gespeichert (Standardnamen)."];
+  byId("namesStatus").innerHTML = lines.join("<br>");
+}
+
+async function saveNames() {
+  showError("namesError", "");
+  const body = {
+    koffer: byId("nameKoffer").value.trim(),
+    bad: byId("nameBad").value.trim(),
+    shared: byId("nameShared").value.trim()
+  };
+  const own = namesInfo && namesInfo.own_kind;
+  const renamesOwn = own && namesInfo.names[own] !== body[own].toLowerCase();
+  const hint = renamesOwn
+    ? "Dieser Pi bekommt einen neuen Namen. Danach musst du diese Seite mit dem neuen Namen öffnen. "
+    : "";
+  if (!window.confirm(hint + "Namen ändern? Die Pis stellen sich innerhalb weniger Sekunden um.")) return;
+  try {
+    await apiPost("/api/node-names", body);
+  } catch (e) {
+    showError("namesError", e.message);
+    return;
+  }
+  await refreshNames().catch(() => {});
+}
+
+function fillNameDefaults() {
+  const d = namesInfo ? namesInfo.defaults : { koffer: "stoppuhr-koffer", bad: "stoppuhr-bad", shared: "stoppuhr" };
+  byId("nameKoffer").value = d.koffer;
+  byId("nameBad").value = d.bad;
+  byId("nameShared").value = d.shared;
 }
 
 async function forceWifi() {
@@ -1653,6 +1702,14 @@ function nodeCardHtml(n, label) {
 
 async function refreshCluster() {
   const c = await apiGet("/api/cluster-status");
+  // Antwortet plötzlich ein anderer Pi unter derselben Adresse (Übernahme oder Rückwechsel), Seite neu laden
+  if ((c.self?.kind || "") !== (document.body.dataset.node || "")) { location.reload(); return; }
+  const takeover = byId("takeoverText");
+  if (takeover && document.body.dataset.node === "bad") {
+    takeover.textContent = c.peer?.reachable
+      ? "Der Koffer-Pi ist wieder erreichbar. Diese Seite wechselt gleich automatisch zurück."
+      : "Der Koffer-Pi ist nicht erreichbar. Diese Seite wechselt automatisch zurück, sobald er wieder online ist.";
+  }
   const badge = byId("activePiBadge");
   const card = byId("clusterCard");
   if (!c.two_pi) { badge.classList.add("d-none"); card.classList.add("d-none"); return; }
@@ -1848,6 +1905,7 @@ async function init() {
       updateRunSelect([]);
       updateStartcardsStatusLine();
       resetSetupPlacement();
+      await Promise.all([loadButtons(), loadRunStatus()]);
       alert(`Wettkampf beendet${result.archive_id ? " und im Archiv gespeichert" : ""}. Der Abschaltbefehl ist ${result.shutdown_grace_s} Sekunden aktiv.`);
     } catch (e) {
       alert("Wettkampf konnte nicht beendet werden: " + e.message);
@@ -1874,10 +1932,13 @@ async function init() {
       err.classList.remove("d-none");
     });
     refreshWifi().catch(() => {});
+    refreshNames().catch(() => {});
     refreshAccount().catch(() => {});
     refreshChargerFw().catch(() => {});
   });
   byId("btnWifiSave").addEventListener("click", saveWifi);
+  byId("btnNamesSave").addEventListener("click", saveNames);
+  byId("btnNamesDefaults").addEventListener("click", fillNameDefaults);
   byId("btnChargerFwUpload").addEventListener("click", uploadChargerFw);
   byId("btnChargerFwDeploy").addEventListener("click", deployChargerFw);
   byId("btnChargerFwReload").addEventListener("click", () => refreshChargerFw().catch(e => alert("Versionen laden fehlgeschlagen: " + e.message)));
@@ -1910,6 +1971,7 @@ async function init() {
     if (byId("settings").classList.contains("active")) {
       refreshFirmware().catch(() => {});
       refreshWifi().catch(() => {});
+      refreshNames().catch(() => {});
     }
   }, 5000);
   byId("tasterList").addEventListener("click", ev => {

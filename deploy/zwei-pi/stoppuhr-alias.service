@@ -1,0 +1,10 @@
+[Unit]
+Description=Gemeinsamer Name (z. B. stoppuhr.local) zeigt auf den arbeitenden Pi
+After=avahi-daemon.service
+Requires=avahi-daemon.service
+
+[Service]
+User=root
+ExecStart=/usr/local/bin/stoppuhr-alias.sh
+Restart=on-failure
+RestartSec=5

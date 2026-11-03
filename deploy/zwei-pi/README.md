@@ -86,6 +86,18 @@ API: `POST /api/assign` (mit `"immediate": true` sofort), `POST /api/cancel-pend
 Der Tab „Systemstatus“ zeigt im Zwei-Pi-Betrieb beide Pis: wer arbeitet, Hostname, WLAN-Name, IP-Adressen, Redis-Zustand (Hauptbestand/Kopie, synchron), Stoppuhr-Dienst, letzter Wechsel, CPU/Temperatur/RAM/Disk. Oben rechts steht ein Kennzeichen „Aktiv: Koffer-Pi/Bad-Pi“ (grün = alles gut, gelb = Partner fehlt oder Kopie nicht synchron, rot = niemand arbeitet). Zusätzlich: Anzahl Taster online je WLAN, und je Taster das aktuelle WLAN (ab Firmware v0.10.1).
 Jeder Pi liefert seinen Zustand über den Dienst `stoppuhr-knoten` (Port 2000), der immer läuft; so ist der Partner auch im Standby sichtbar.
 
+### Namen (ab v0.27.0)
+
+Jeder Pi ist immer unter seinem eigenen Namen erreichbar (Standard `stoppuhr-koffer.local` bzw. `stoppuhr-bad.local`), solange er läuft; im Standby antwortet aber nur der Systemstatus-Dienst (Port 2000), die Oberfläche (Port 1999) gibt es nur auf dem arbeitenden Pi. Zusätzlich teilen sich beide den Namen **`stoppuhr`**, er führt immer zum arbeitenden Pi:
+- Router-Netz (PC, Handy): `http://stoppuhr.local:1999`. Der Dienst `stoppuhr-alias` läuft nur auf dem arbeitenden Pi (keepalived startet und stoppt ihn in `stoppuhr-rolle.sh`) und veröffentlicht den Namen per mDNS mit dessen Router-Adresse.
+- Taster-WLAN: `http://stoppuhr:1999` über dnsmasq (zeigt auf die gemeinsame Adresse).
+
+Alle drei Namen stehen in der Oberfläche unter Einstellungen → „Namen der Pis“ (Kleinbuchstaben, Ziffern, Bindestrich; verschieden). Sie liegen in Redis und werden vom Systemstatus-Dienst jedes Pi innerhalb weniger Sekunden umgesetzt: Hostname (`hostnamectl`, `/etc/hosts`, Avahi neu starten), `/etc/dnsmasq.d/stoppuhr-name.conf` und `/etc/stoppuhr-namen.env`. Bis zum ersten Speichern gelten die Standardnamen bzw. `NAME=` aus der Installation.
+- Die Seite des Bad-Pi hat einen orangen Hintergrund und den Hinweis „Ersatz-Pi (Bad-Pi) arbeitet“. Wechselt die Arbeit zurück, lädt sich eine über den gemeinsamen Namen geöffnete Seite selbst neu.
+- Auf bereits eingerichteten Pis `install-zwei-pi.sh` erneut ausführen (installiert `avahi-utils` und den Dienst `stoppuhr-alias`).
+- Rechner und Browser behalten alte Namenseinträge bis zu 2 Minuten (mDNS-Zwischenspeicher). Wer den Namen des Pi ändert, über den er gerade die Seite aufruft, muss sie danach mit dem neuen Namen öffnen.
+- Fällt der arbeitende Pi plötzlich aus (Strom weg), sendet er kein Goodbye; der Partner kann den gemeinsamen Namen trotzdem sofort veröffentlichen, nur Zwischenspeicher zeigen kurz noch die alte Adresse.
+
 ## Testreihenfolge vor dem Einsatz
 
 1. Beide Pis einrichten, Kabel verbinden. Systemstatus: Koffer-Pi „arbeitet“, Bad-Pi „Bereitschaft“, Daten „Kopie (synchron)“.

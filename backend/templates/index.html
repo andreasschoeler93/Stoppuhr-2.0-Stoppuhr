@@ -7,6 +7,7 @@
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css">
   <style>
     body { background-color: #f8f9fa; }
+    body[data-node="bad"] { background-color: #ffe3b3; }
     .nav-tabs .nav-link.active { font-weight: 600; }
     .settings-summary { cursor: pointer; font-weight: 600; padding: .7rem .9rem; border: 1px solid #dee2e6; border-radius: .375rem; background: #fff; }
     details[open] > .settings-summary { margin-bottom: .5rem; }
@@ -36,8 +37,12 @@
     td.text-muted .val-danger, td.text-muted .val-warning { color: inherit; font-weight: normal; }
   </style>
 </head>
-<body>
+<body data-node="{{ node_kind }}">
 <div class="container py-3">
+  <div id="takeoverBanner" class="alert alert-warning{% if node_kind != 'bad' %} d-none{% endif %}" role="status">
+    <strong>Ersatz-Pi (Bad-Pi) arbeitet.</strong>
+    <span id="takeoverText">Der Koffer-Pi ist nicht erreichbar. Diese Seite wechselt automatisch zurück, sobald er wieder online ist.</span>
+  </div>
   <div class="d-flex justify-content-between align-items-center mb-3">
     <h1 class="h4 mb-0">Stoppuhr – Läufe, Bahnen & Taster</h1>
     <div class="d-flex align-items-center gap-3">
@@ -377,6 +382,44 @@
             <span class="text-danger small d-none" id="limitsError"></span>
           </div>
         </div>
+            </div>
+          </details>
+
+          <details class="mb-3 d-none" id="namesSection">
+            <summary class="settings-summary">Namen der Pis</summary>
+            <div class="card mt-2">
+              <div class="card-body">
+                <p class="text-muted small mb-3">
+                  Jeder Pi ist immer unter seinem eigenen Namen erreichbar. Der gemeinsame Name führt zum Pi,
+                  der gerade arbeitet. Erreichbar sind sie als <code>http://NAME.local:1999</code>
+                  (im Taster-WLAN auch als <code>http://NAME:1999</code> für den gemeinsamen Namen).
+                </p>
+                <div class="row g-2">
+                  <div class="col-md-4">
+                    <label class="form-label" for="nameKoffer">Koffer-Pi</label>
+                    <input class="form-control" id="nameKoffer" maxlength="63" autocomplete="off" spellcheck="false">
+                  </div>
+                  <div class="col-md-4">
+                    <label class="form-label" for="nameBad">Bad-Pi</label>
+                    <input class="form-control" id="nameBad" maxlength="63" autocomplete="off" spellcheck="false">
+                  </div>
+                  <div class="col-md-4">
+                    <label class="form-label" for="nameShared">Gemeinsamer Name</label>
+                    <input class="form-control" id="nameShared" maxlength="63" autocomplete="off" spellcheck="false">
+                  </div>
+                </div>
+                <div class="d-flex gap-2 mt-2">
+                  <button class="btn btn-primary btn-sm" id="btnNamesSave" type="button">Übernehmen</button>
+                  <button class="btn btn-outline-secondary btn-sm" id="btnNamesDefaults" type="button">Standardnamen einsetzen</button>
+                </div>
+                <div class="form-text">
+                  Erlaubt sind Kleinbuchstaben, Ziffern und Bindestrich. Nach dem Übernehmen stellt sich jeder Pi innerhalb
+                  weniger Sekunden um. Wird der Name des Pi geändert, über den du diese Seite gerade aufrufst,
+                  musst du die Seite danach mit dem neuen Namen öffnen. Browser merken sich alte Namen bis zu 2 Minuten.
+                </div>
+                <div class="small mt-2" id="namesStatus"></div>
+                <div class="text-danger small d-none" id="namesError"></div>
+              </div>
             </div>
           </details>
 

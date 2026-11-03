@@ -5,6 +5,7 @@ Jede Version ist als Git-Tag `vX.Y.Z` markiert und kann in der Weboberfläche un
 
 | Version | Datum | Änderung |
 |---|---|---|
+| v0.27.0 | 2026-11-03 | Namen im Zwei-Pi-Betrieb: Jeder Pi bleibt unter seinem eigenen Namen erreichbar, zusätzlich teilen sich beide den Namen `stoppuhr` (Router-Netz per mDNS über den neuen Dienst `stoppuhr-alias` auf dem arbeitenden Pi, Taster-WLAN per dnsmasq). Alle drei Namen sind unter Einstellungen → „Namen der Pis“ änderbar. Die Oberfläche des Bad-Pi hat bei Übernahme einen orangen Hintergrund mit Hinweis; über den gemeinsamen Namen geöffnete Seiten laden sich beim Wechsel selbst neu. Pis mit `install-zwei-pi.sh` neu einrichten. Behoben: „Wettkampf beenden“ aktualisierte seit v0.26.0 Taster und Lauf nicht mehr sofort. |
 | v0.26.1 | 2026-11-03 | Einrichtung vorne: Nach erfolgreichem Laden der Startkarten verschwindet Schritt 1, Schritt 2 bleibt 10 Sekunden stehen oder wird sofort mit „Kopieren“ ausgeblendet. |
 | v0.26.0 | 2026-11-03 | Solange noch kein Lauf geladen ist, stehen die beiden Einrichtungsschritte vorne auf der Stoppuhr-Seite vor „Lauf wählen“. Sie wandern zurück in die Einstellungen, sobald ein Lauf geladen ist oder 10 Sekunden nach „Kopieren“ in Schritt 2. |
 | v0.25.0 | 2026-11-03 | JAuswertung-Einrichtung korrigiert: IP, eigener HTTP-Port und Startkarten-Pfad in Schritt 1; Stoppuhr-IP für „AlphaServer Server“ in Schritt 2. Wettkampf beenden dauerhaft sichtbar. Einzelwecken je Ladeplatz mit Ladekoffer-Firmware v0.6.0. Nicht mehr benötigte Docker-Entwicklungsdateien entfernt. |

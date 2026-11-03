@@ -12,6 +12,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import redis
 
 import node_info
+import node_names
 import wifi_config
 
 
@@ -54,6 +55,26 @@ def wlan_loop() -> None:
             print(f"WLAN-Abgleich: {exc}", flush=True)
 
 
+def names_loop() -> None:
+    """Setzt neue Pi-Namen um, sobald sie in der Oberflaeche gespeichert wurden."""
+    r = redis.Redis(host="127.0.0.1", port=6379, socket_timeout=2, decode_responses=True)
+    kind = os.environ.get("ROLLE", "")
+    retry_after = 0.0
+    while True:
+        time.sleep(5)
+        try:
+            cfg = node_names.load(r)
+            if not cfg or node_names.applied_version() >= cfg["version"] or time.time() < retry_after:
+                continue
+            error = node_names.apply_to_pi(cfg, kind)
+            if error:
+                print(f"Namen umstellen fehlgeschlagen: {error}", flush=True)
+                retry_after = time.time() + 60
+        except Exception as exc:  # der Dienst darf wegen eines Fehlers hier nie enden
+            print(f"Namen-Abgleich: {exc}", flush=True)
+
+
 if __name__ == "__main__":
     threading.Thread(target=wlan_loop, daemon=True).start()
+    threading.Thread(target=names_loop, daemon=True).start()
     ThreadingHTTPServer(("0.0.0.0", node_info.NODE_PORT), Handler).serve_forever()

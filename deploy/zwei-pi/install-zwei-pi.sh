@@ -112,6 +112,12 @@ sudo mkdir -p /etc/systemd/system/stoppuhr.service.d
 printf '[Service]\nEnvironmentFile=/etc/stoppuhr-zwei-pi.env\n' | sudo tee /etc/systemd/system/stoppuhr.service.d/zwei-pi.conf >/dev/null
 DIR="$(cd "$HIER/../.." && pwd)"
 sed -e "s|__DIR__|$DIR|g" "$HIER/stoppuhr-knoten.service" | sudo tee /etc/systemd/system/stoppuhr-knoten.service >/dev/null
+# Gemeinsamer Name im Router-Netz (mDNS): der arbeitende Pi veroeffentlicht ihn (stoppuhr-rolle.sh startet den Dienst)
+sudo apt-get install -y avahi-utils
+sudo install -m 755 "$HIER/stoppuhr-alias.sh" /usr/local/bin/stoppuhr-alias.sh
+sudo install -m 644 "$HIER/stoppuhr-alias.service" /etc/systemd/system/stoppuhr-alias.service
+# Namen aus der Oberflaeche (Redis) haben Vorrang; diese Datei ist nur der Anfangswert
+[ -f /etc/stoppuhr-namen.env ] || printf 'SHARED_NAME=%s\n' "$NAME" | sudo tee /etc/stoppuhr-namen.env >/dev/null
 sudo systemctl daemon-reload
 sudo systemctl enable --now stoppuhr-knoten
 sudo install -m 755 "$HIER/stoppuhr-pruefen.sh" /usr/local/bin/stoppuhr-pruefen.sh

@@ -10,12 +10,15 @@ case "$3" in
     # Kopie zum Hauptbestand machen und die Stoppuhr starten
     redis-cli replicaof no one >/dev/null
     systemctl start stoppuhr
+    # Der gemeinsame Name (mDNS) zeigt ab jetzt auf diesen Pi
+    systemctl start stoppuhr-alias || true
     ;;
   BACKUP|FAULT)
     # Arbeit abgeben, Daten vom neuen Hauptpi als Kopie halten.
     # Hat dieser Pi aber mehr neue Daten (Kabel war getrennt, Lauf lief hier), nicht ueberschreiben:
     # Der Partner gleicht sich dann selbst an uns an (stoppuhr-pruefen.sh).
     systemctl stop stoppuhr
+    systemctl stop stoppuhr-alias 2>/dev/null || true
     off() { timeout 2 redis-cli "$@" info replication 2>/dev/null | tr -d '\r' | awk -F: '/^master_repl_offset:/{print $2}'; }
     mine=$(off); peer=$(off -h "$PEER_IP")
     if [ "${mine:-0}" -gt "${peer:-0}" ] && [ -n "$peer" ]; then

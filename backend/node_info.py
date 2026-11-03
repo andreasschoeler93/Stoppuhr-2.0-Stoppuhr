@@ -18,6 +18,8 @@ from typing import Any, Optional
 import psutil
 import redis
 
+import node_names
+
 NODE_PORT = int(os.environ.get("NODE_PORT", "2000"))
 ROLE_FILE = os.environ.get("ROLE_CHANGE_FILE", "/var/lib/stoppuhr-rollenwechsel")
 
@@ -103,6 +105,7 @@ def collect() -> dict[str, Any]:
         "vip": vip,
         "wifi_ssid": _wifi_ssid(),
         "wifi_applied_ver": _wifi_applied(),
+        "names_applied_ver": node_names.applied_version(),
         "uptime_s": int(time.time() - psutil.boot_time()),
         "cpu_percent": psutil.cpu_percent(interval=None),
         "cpu_temp": _cpu_temp(),

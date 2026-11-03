@@ -42,6 +42,19 @@ class ClientIpTests(unittest.TestCase):
         self.assertIn('id="setupSettingsSlot"', html)
         self.assertIn('<section id="status"', html)
 
+    def _banner_tag(self, role):
+        with patch.dict("os.environ", {"ROLLE": role}):
+            html = self.client.get("/").get_data(as_text=True)
+        return html, re.search(r'<div id="takeoverBanner"[^>]*>', html).group(0)
+
+    def test_backup_pi_marks_dashboard(self):
+        html, banner = self._banner_tag("bad")
+        self.assertIn('<body data-node="bad">', html)
+        self.assertNotIn("d-none", banner)
+        html, banner = self._banner_tag("koffer")
+        self.assertIn('<body data-node="koffer">', html)
+        self.assertIn("d-none", banner)
+
 
 if __name__ == "__main__":
     unittest.main()
