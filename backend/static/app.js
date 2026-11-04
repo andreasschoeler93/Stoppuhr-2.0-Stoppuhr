@@ -1477,6 +1477,18 @@ function updateFinishUi(runKey, run) {
       + (missing.length ? ` Keine Zeit: Bahn ${missing.join(", ")}.` : "") + `</div>`;
   }
   setHtmlIfChanged(byId("runNotice"), notice);
+
+  // Startabweichung: Bahntaster, die rund um den Start gedrueckt wurden (negativ = vor dem Start)
+  const dev = Object.entries(run.start_deviation || {}).sort((a, b) => Number(a[0]) - Number(b[0]));
+  const devBadge = byId("startDeviationCount");
+  devBadge.textContent = dev.length ? String(dev.length) : "";
+  devBadge.classList.toggle("d-none", !dev.length);
+  setHtmlIfChanged(byId("startDeviationBody"), dev.length
+    ? `<table class="table table-sm mb-0"><thead><tr><th>Bahn</th><th>Abweichung zum Start</th></tr></thead><tbody>`
+      + dev.map(([lane, ms]) => `<tr><td>${escapeHtml(lane)}</td><td>${ms > 0 ? "+" : ms < 0 ? "−" : ""}${(Math.abs(ms) / 1000).toFixed(3)} s `
+        + `<span class="text-muted small">(${ms < 0 ? "vor" : "nach"} dem Starter)</span></td></tr>`).join("")
+      + `</tbody></table>`
+    : `<span class="text-muted small">Keine Abweichung in diesem Lauf.</span>`);
 }
 
 document.addEventListener("dragstart", ev => {

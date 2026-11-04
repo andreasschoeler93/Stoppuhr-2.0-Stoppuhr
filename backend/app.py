@@ -1,6 +1,6 @@
 # ----------------------------------------
 # Stoppuhr Webserver
-# Version: v0.30.0
+# Version: v0.31.0
 # Status: stable-beta
 # ----------------------------------------
 
@@ -42,7 +42,7 @@ import node_names
 from xml_writer import create_xml_heats
 
 
-APP_VERSION: Final[str] = "0.30.0"
+APP_VERSION: Final[str] = "0.31.0"
 DEFAULT_PORT: Final[int] = 1999  # Since JAuswertung expected this port
 EXIT_ERROR: Final[int] = 1
 STATE_KEY: Final[str] = "STATE"
@@ -246,6 +246,9 @@ def _int_setting(st: State, key: str, default: int) -> int:
         return int(st.get("settings", {}).get(key, default))
     except (TypeError, ValueError):
         return default
+
+
+START_DEVIATION_WINDOW_MS = 3000  # Bahntaster-Druck bis so lange vor dem Start zaehlt als Startabweichung
 
 
 def _stop_lockout_ms(st: State) -> int:
@@ -689,6 +692,8 @@ def api_end_competition() -> ResponseReturnValue:
     st["finish_parked"] = {}
     st["finish_adopted"] = {}
     st["stopped_by_starter"] = []
+    st["start_deviation"] = {}  # type: ignore[typeddict-unknown-key]
+    st["prestart_presses"] = {}  # type: ignore[typeddict-unknown-key]
     st["clock_offsets"] = {}
     st["current_run"] = 1
     st["current_attempt"] = 1
@@ -734,7 +739,7 @@ def _archive_competition(st: State, name: str) -> str:
             key: st.get(key)
             for key in (
                 "triggers_per_run", "finish_per_run", "finish_assign", "finish_parked", "finish_adopted",
-                "stopped_by_starter", "aborted_attempts", "assignments",
+                "stopped_by_starter", "start_deviation", "aborted_attempts", "assignments",
             )
         },
     }
@@ -2264,6 +2269,11 @@ def api_post_triggers():
     if lane != STARTER_KEY and not any(
         p == STARTER_KEY for p in triggers_per_run[current_key].keys()
     ):
+        # Kurz vor dem Start gemerkt, damit die Startabweichung spaeter berechnet werden kann
+        if lane in lanes_in_run:
+            pre = st.setdefault("prestart_presses", {}).setdefault(current_key, {})  # type: ignore[typeddict-item]
+            pre[lane] = ts_val
+            save_state(st)
         return jsonify({"ok": False, "error": "Run has not started yet."}), 400
     # Stopp-Sperre: Bahn-Signale kurz nach dem Start werden ignoriert (z. B. Fehlausloesungen)
     if lane != STARTER_KEY:
@@ -2271,6 +2281,10 @@ def api_post_triggers():
         lockout_ms = _stop_lockout_ms(st)
         if starter_press and ts_val - int(starter_press["ts"]) < lockout_ms:
             logger.info(f"Stop signal of lane {lane} ignored (lockout {lockout_ms} ms)")
+            if lane in lanes_in_run:
+                dev = st.setdefault("start_deviation", {}).setdefault(current_key, {})  # type: ignore[typeddict-item]
+                dev.setdefault(lane, ts_val - int(starter_press["ts"]))
+                save_state(st)
             return jsonify({"ok": True, "ignored": True, "reason": "stop_lockout"})
     # Abort double press
     if triggers_per_run[current_key][lane]:
@@ -2285,6 +2299,13 @@ def api_post_triggers():
 
     triggers_per_run[current_key][lane] = press
     st["triggers_per_run"] = triggers_per_run
+    if lane == STARTER_KEY:
+        # Bahntaster, die kurz vor dem Start gedrueckt wurden: negative Abweichung
+        pre = (st.get("prestart_presses") or {}).pop(current_key, None) or {}  # type: ignore[typeddict-item]
+        for pre_lane, pre_ts in pre.items():
+            if 0 < ts_val - int(pre_ts) <= START_DEVIATION_WINDOW_MS:
+                dev = st.setdefault("start_deviation", {}).setdefault(current_key, {})  # type: ignore[typeddict-item]
+                dev.setdefault(pre_lane, int(pre_ts) - ts_val)
     save_state(st)
     if lane == STARTER_KEY:
         vitals_history.add_start(redis_store, ts_val, current_key)
@@ -2505,6 +2526,7 @@ def api_get_run_status():
             "times_ms": times,
             "running": starter_ts is not None and run_key == current_key and st.get("run_finished_ts") is None,
             "stopped_by_starter": run_key in stopped_keys,
+            "start_deviation": (st.get("start_deviation") or {}).get(run_key) or {},  # type: ignore[call-overload]
             "finish": _finish_info(st, run_key),
             "adopted": [
                 {"label": _attempt_key(_parse_attempt_key(run_key)[0], v["attempt"]), "lanes": v["lanes"]}
@@ -2622,6 +2644,8 @@ def api_test_reset_run():
     (st.get("finish_assign") or {}).pop(run_key, None)
     (st.get("finish_parked") or {}).pop(run_key, None)
     (st.get("finish_adopted") or {}).pop(run_key, None)
+    (st.get("start_deviation") or {}).pop(run_key, None)  # type: ignore[call-overload]
+    (st.get("prestart_presses") or {}).pop(run_key, None)  # type: ignore[call-overload]
     st["stopped_by_starter"] = [k for k in (st.get("stopped_by_starter") or []) if k != run_key]
     st["run_finished_ts"] = None
     save_state(st)
