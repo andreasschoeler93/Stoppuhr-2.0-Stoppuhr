@@ -34,7 +34,9 @@ class StartDeviationTests(unittest.TestCase):
         return (self.state.get("start_deviation") or {}).get("5", {})
 
     def test_press_before_start_is_negative(self):
-        self.assertEqual(self.press("L1", 9_900).status_code, 400)
+        r = self.press("L1", 9_900)
+        self.assertEqual(r.status_code, 200)
+        self.assertTrue(r.json["deferred"])
         self.assertEqual(self.press("AA", 10_000).status_code, 200)
         self.assertEqual(self.deviation(), {"1": -100})
 

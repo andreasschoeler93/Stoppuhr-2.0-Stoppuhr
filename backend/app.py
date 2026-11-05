@@ -1,6 +1,6 @@
 # ----------------------------------------
 # Stoppuhr Webserver
-# Version: v0.31.0
+# Version: v0.32.0
 # Status: stable-beta
 # ----------------------------------------
 
@@ -27,6 +27,7 @@ import redis
 from flask import Flask, Response, abort, g, jsonify, redirect, render_template, request, send_file, session
 from flask.sessions import SecureCookieSessionInterface
 from flask.typing import ResponseReturnValue
+from werkzeug.exceptions import HTTPException
 import archive
 import auth
 import firmware_store
@@ -42,7 +43,7 @@ import node_names
 from xml_writer import create_xml_heats
 
 
-APP_VERSION: Final[str] = "0.31.0"
+APP_VERSION: Final[str] = "0.32.0"
 DEFAULT_PORT: Final[int] = 1999  # Since JAuswertung expected this port
 EXIT_ERROR: Final[int] = 1
 STATE_KEY: Final[str] = "STATE"
@@ -694,6 +695,8 @@ def api_end_competition() -> ResponseReturnValue:
     st["stopped_by_starter"] = []
     st["start_deviation"] = {}  # type: ignore[typeddict-unknown-key]
     st["prestart_presses"] = {}  # type: ignore[typeddict-unknown-key]
+    st["deferred_presses"] = []  # type: ignore[typeddict-unknown-key]
+    st["starter_stop_ts"] = {}  # type: ignore[typeddict-unknown-key]
     st["clock_offsets"] = {}
     st["current_run"] = 1
     st["current_attempt"] = 1
@@ -2163,8 +2166,39 @@ def api_post_finish_transfer():
     return jsonify({"ok": True, "label": _attempt_key(parsed[0], versions[-1]["attempt"]) if versions else None})
 
 
-@app.post("/api/triggers")
-def api_post_triggers():
+DEFERRED_MAX_AGE_MS: Final[int] = 15 * 60 * 1000  # Vorgemerkte Bahn-Druecke verfallen danach
+DEFERRED_MAX_COUNT: Final[int] = 200
+
+
+def _defer_press(st: State, mac: str, raw_ts: Any) -> None:
+    """Merkt einen Bahn-Druck vor, der vor dem passenden Start eintrifft (Zustellung ohne Pi nachgeholt).
+
+    Jeder Taster hat seine eigene Warteschlange; nach einem Pi-Ausfall kann der Stopp einer Bahn
+    vor dem Start des Starters ankommen. Er wird nach dem Start nach Zeitstempel eingeordnet.
+    """
+    now = now_ms()
+    kept = [
+        d for d in (st.get("deferred_presses") or [])
+        if now - int(d.get("recv", 0)) < DEFERRED_MAX_AGE_MS
+        and not (d["mac"] == mac and d["ts"] == raw_ts)
+    ]
+    kept.append({"mac": mac, "ts": raw_ts, "recv": now})
+    st["deferred_presses"] = kept[-DEFERRED_MAX_COUNT:]  # type: ignore[typeddict-unknown-key]
+
+
+def _replay_deferred(st: State) -> None:
+    """Spielt vorgemerkte Bahn-Druecke nach einem Start in Zeitreihenfolge ein."""
+    pending = sorted(st.get("deferred_presses") or [], key=lambda d: int(d["ts"]))
+    st["deferred_presses"] = []  # type: ignore[typeddict-unknown-key]
+    save_state(st)
+    for d in pending:
+        try:
+            _handle_trigger(st, {"mac": d["mac"], "ts": d["ts"]}, replay=True)
+        except HTTPException:
+            continue
+
+
+def _handle_trigger(st: State, payload: dict[str, Any], replay: bool = False):
     """
     Records a taster press for the CURRENT run.
 
@@ -2174,9 +2208,8 @@ def api_post_triggers():
     Response:
       { ok: true, press: {ts, run, mac} }
     """
-    st = load_state()
-    _maybe_advance_run(st)
-    payload = request.get_json(force=True, silent=True) or {}
+    if not replay:
+        _maybe_advance_run(st)
 
     mac = payload.get("mac")
     # Testbetrieb: Taster-Druck ohne echten Taster fuer eine Bahn/den Starter ausloesen
@@ -2259,6 +2292,7 @@ def api_post_triggers():
         stopped = set(st.get("stopped_by_starter") or [])
         stopped.add(current_key)
         st["stopped_by_starter"] = sorted(stopped)
+        st.setdefault("starter_stop_ts", {})[current_key] = ts_val  # type: ignore[typeddict-item]
         st["run_finished_ts"] = now_ms()
         save_state(st)
         _write_heats_xml(st)
@@ -2273,12 +2307,26 @@ def api_post_triggers():
         if lane in lanes_in_run:
             pre = st.setdefault("prestart_presses", {}).setdefault(current_key, {})  # type: ignore[typeddict-item]
             pre[lane] = ts_val
+            if test_lane is None and payload.get("ts") is not None:
+                # Der Start kann noch kommen (Zustellung nach Pi-Ausfall): nach dem Start einordnen
+                _defer_press(st, mac_norm, int(payload["ts"]))
+                save_state(st)
+                return jsonify({"ok": True, "deferred": True, "reason": "run_not_started"})
             save_state(st)
         return jsonify({"ok": False, "error": "Run has not started yet."}), 400
+    # Druck gehoert zu einem spaeteren Lauf, dessen Start noch nicht eingetroffen ist
+    if lane != STARTER_KEY and test_lane is None and lane in lanes_in_run and st.get("run_finished_ts") is not None:
+        stop_ts = (st.get("starter_stop_ts") or {}).get(current_key)
+        if triggers_per_run[current_key].get(lane) or (stop_ts is not None and ts_val > int(stop_ts)):
+            _defer_press(st, mac_norm, int(payload.get("ts", ts_val)))
+            save_state(st)
+            return jsonify({"ok": True, "deferred": True, "reason": "next_run_not_started"})
     # Stopp-Sperre: Bahn-Signale kurz nach dem Start werden ignoriert (z. B. Fehlausloesungen)
     if lane != STARTER_KEY:
         starter_press = triggers_per_run[current_key].get(STARTER_KEY)
         lockout_ms = _stop_lockout_ms(st)
+        if starter_press and ts_val < int(starter_press["ts"]) - START_DEVIATION_WINDOW_MS:
+            return jsonify({"ok": True, "ignored": True, "reason": "before_start"})
         if starter_press and ts_val - int(starter_press["ts"]) < lockout_ms:
             logger.info(f"Stop signal of lane {lane} ignored (lockout {lockout_ms} ms)")
             if lane in lanes_in_run:
@@ -2316,6 +2364,8 @@ def api_post_triggers():
         # Nach der eingestellten Wartezeit in den naechsten Lauf wechseln
         st["run_finished_ts"] = now_ms()
     save_state(st)
+    if lane == STARTER_KEY and not replay:
+        _replay_deferred(st)
     return jsonify(
         {
             "ok": True,
@@ -2328,6 +2378,13 @@ def api_post_triggers():
             },
         }
     )
+
+
+@app.post("/api/triggers")
+def api_post_triggers():
+    st = load_state()
+    payload = request.get_json(force=True, silent=True) or {}
+    return _handle_trigger(st, payload)
 
 
 def _display_text(text: Any, limit: int = 30) -> str:
