@@ -85,6 +85,33 @@ class OfflineReplayTests(unittest.TestCase):
         self.press("AA", 40_000)
         self.assertEqual(self.lane_time(6, "2"), 10_000)
 
+    def test_lanes_without_taster_do_not_block_next_run(self):
+        # Fuenf Bahnen im Lauf, aber nur Bahn 2 hat einen Taster
+        self.state["startcards_per_run"]["5"] = [{"Bahn": str(i)} for i in range(1, 6)]
+        self.state["assignments"]["mapping"] = {"starter": "AA", "2": "L2"}
+        self.press("AA", 10_000)
+        self.press("L2", 20_000)
+        self.assertIsNotNone(self.state["run_finished_ts"])
+        self.press("AA", 60_000)
+        self.assertEqual(self.state["current_run"], 6)
+
+    def test_combo_starter_replay_starts_next_run_after_grace(self):
+        self.state["settings"]["starter_is_finish"] = "1"
+        self.state["assignments"]["mapping"] = {"starter": "AA", "2": "L2"}
+        self.press("AA", 10_000)
+        self.press("L2", 20_000)  # einzige Bahn mit Taster: Lauf beendet
+        self.press("AA", 60_000)  # neuer Start, kein Zieleinlauf
+        self.assertEqual(self.state["current_run"], 6)
+
+    def test_combo_finish_count_ends_run(self):
+        self.state["settings"]["starter_is_finish"] = "1"
+        self.press("AA", 10_000)
+        self.press("AA", 20_000)
+        self.press("AA", 21_000)
+        self.assertIsNotNone(self.state["run_finished_ts"])
+        self.press("AA", 60_000)
+        self.assertEqual(self.state["current_run"], 6)
+
     def test_unrelated_old_press_is_not_counted(self):
         self.press("L1", 1_000)
         self.press("AA", 10_000)

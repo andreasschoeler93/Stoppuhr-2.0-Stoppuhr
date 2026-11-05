@@ -1,6 +1,6 @@
 # ----------------------------------------
 # Stoppuhr Webserver
-# Version: v0.33.1
+# Version: v0.34.0
 # Status: stable-beta
 # ----------------------------------------
 
@@ -43,7 +43,7 @@ import node_names
 from xml_writer import create_xml_heats
 
 
-APP_VERSION: Final[str] = "0.33.1"
+APP_VERSION: Final[str] = "0.34.0"
 DEFAULT_PORT: Final[int] = 1999  # Since JAuswertung expected this port
 EXIT_ERROR: Final[int] = 1
 STATE_KEY: Final[str] = "STATE"
@@ -697,7 +697,7 @@ def api_end_competition() -> ResponseReturnValue:
     st["prestart_presses"] = {}  # type: ignore[typeddict-unknown-key]
     st["deferred_presses"] = []  # type: ignore[typeddict-unknown-key]
     st["starter_stop_ts"] = {}  # type: ignore[typeddict-unknown-key]
-    st["clock_offsets"] = {}
+    st["run_done_event_ts"] = {}  # type: ignore[typeddict-unknown-key]
     st["current_run"] = 1
     st["current_attempt"] = 1
     st["start_locked_until_ms"] = 0
@@ -2258,9 +2258,23 @@ def _handle_trigger(st: State, payload: dict[str, Any], replay: bool = False):
     if lane == STARTER_KEY and str(st.get("settings", {}).get("starter_is_finish", "0")) == "1":
         started = (st.get("triggers_per_run") or {}).get(current_key, {}).get(STARTER_KEY)
         done_ts = st.get("run_finished_ts")
-        recently_done = done_ts is not None and now_ms() - int(done_ts) < STARTER_FINISH_GRACE_MS
+        # Nach Pi-Ausfall kommen Druecke gebuendelt an: zaehlt der Zeitstempel, nicht die Ankunft
+        done_event = (st.get("run_done_event_ts") or {}).get(current_key)
+        if done_event is not None:
+            recently_done = ts_val - int(done_event) < STARTER_FINISH_GRACE_MS
+        else:
+            recently_done = done_ts is not None and now_ms() - int(done_ts) < STARTER_FINISH_GRACE_MS
         if started and (done_ts is None or recently_done):
-            return _record_finish_press(st, current_key, mac_norm, ts_val)
+            resp = _record_finish_press(st, current_key, mac_norm, ts_val)
+            # Alle Uhren gestoppt (so viele Zieleinlauf-Druecke wie Bahnen): Lauf ist beendet
+            needed = len((st.get("startcards_per_run") or {}).get(str(current_run), []))
+            collected = (st.get("finish_per_run") or {}).get(current_key) or []
+            if st.get("run_finished_ts") is None and needed and len(collected) >= needed:
+                st["run_finished_ts"] = now_ms()
+                st.setdefault("run_done_event_ts", {})[current_key] = ts_val  # type: ignore[typeddict-unknown-key]
+                save_state(st)
+                _write_heats_xml(st)
+            return resp
 
     if lane == STARTER_KEY:
         locked_until = int(st.get("start_locked_until_ms", 0) or 0)
@@ -2395,12 +2409,15 @@ def _handle_trigger(st: State, payload: dict[str, Any], replay: bool = False):
     save_state(st)
     if lane == STARTER_KEY:
         vitals_history.add_start(redis_store, ts_val, current_key)
-    # Check, if for all lanes presses have been received
-    if lanes_in_run and not (set(lanes_in_run) - set(triggers_per_run[current_key].keys())):
+    # Check, if for all lanes presses have been received (Bahnen ohne Taster werden nicht erwartet)
+    mapping = (st.get("assignments") or {}).get("mapping") or {}
+    expected = [l for l in lanes_in_run if mapping.get(l)] or lanes_in_run
+    if expected and not (set(expected) - set(triggers_per_run[current_key].keys())):
         logger.info(f"All lanes have been pressed in run {current_key}")
         _write_heats_xml(st)
         # Nach der eingestellten Wartezeit in den naechsten Lauf wechseln
         st["run_finished_ts"] = now_ms()
+        st.setdefault("run_done_event_ts", {})[current_key] = ts_val  # type: ignore[typeddict-unknown-key]
     save_state(st)
     if lane == STARTER_KEY and not replay:
         _replay_deferred(st)
@@ -2474,6 +2491,7 @@ def api_get_display():
         "attempt": attempt,
         "state": "ready",
         "max_lane": int((st.get("startcards") or {}).get("max_lane") or 0),
+        "combo": 1 if str((st.get("settings") or {}).get("starter_is_finish", "0")) == "1" else 0,
         "server_now": now,
         "elapsed_ms": None,
         "time_ms": None,

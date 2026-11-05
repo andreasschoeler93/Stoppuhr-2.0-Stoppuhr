@@ -5,6 +5,7 @@ Jede Version ist als Git-Tag `vX.Y.Z` markiert und kann in der Weboberfläche un
 
 | Version | Datum | Änderung |
 |---|---|---|
+| v0.34.0 | 2026-11-05 | Lauf gilt als beendet, wenn alle Bahnen mit zugewiesenem Taster gestoppt haben (Bahnen ohne Taster blockieren nicht mehr). Starter mit Zieleinlauf: Lauf endet auch, wenn so viele Zieleinlauf-Drücke wie Bahnen eingegangen sind; Zuordnung nach Zeitstempel (wichtig bei nachgelieferten Drücken). `/api/display` liefert `combo`. |
 | v0.33.1 | 2026-11-05 | Nach Pi-Ausfall: Stopps des nächsten Laufs, die vor dem Starter-Stopp eintreffen, zählen nicht mehr zum alten Lauf. Der Starter beendet den Lauf auch, wenn eine Bahn nie gestoppt wurde. |
 | v0.33.0 | 2026-11-05 | `/api/display` liefert `max_lane` (höchste Bahn der Startkarten), damit der Ziel-Taster bei Pi-Ausfall so viele Uhren zeigen kann. |
 | v0.32.0 | 2026-11-05 | Nachgelieferte Taster-Drücke nach Pi-Ausfall: Drücke werden nach ihrem Zeitstempel einem Lauf zugeordnet, nicht nach Ankunftsreihenfolge. Kommt der Stopp einer Bahn vor dem Start (jeder Taster sendet aus seiner eigenen Warteschlange), wird er vorgemerkt und nach dem Start eingeordnet, statt mit 400 verworfen zu werden. Stopps, die nach dem Ende des Laufs (Starter-Stopp oder alle Bahnen) liegen, gehören zum nächsten Lauf. Benötigt Taster-Firmware, die den Zeitstempel beim Druck festhält. |
