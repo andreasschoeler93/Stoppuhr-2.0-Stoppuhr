@@ -1,6 +1,6 @@
 # ----------------------------------------
 # Stoppuhr Webserver
-# Version: v0.33.0
+# Version: v0.33.1
 # Status: stable-beta
 # ----------------------------------------
 
@@ -43,7 +43,7 @@ import node_names
 from xml_writer import create_xml_heats
 
 
-APP_VERSION: Final[str] = "0.33.0"
+APP_VERSION: Final[str] = "0.33.1"
 DEFAULT_PORT: Final[int] = 1999  # Since JAuswertung expected this port
 EXIT_ERROR: Final[int] = 1
 STATE_KEY: Final[str] = "STATE"
@@ -2276,6 +2276,27 @@ def _handle_trigger(st: State, payload: dict[str, Any], replay: bool = False):
 
     # Starter-Druck nach abgeschlossenem Lauf startet sofort den naechsten Lauf
     if lane == STARTER_KEY and st.get("run_finished_ts") is not None:
+        old_presses = (st.get("triggers_per_run") or {}).get(current_key) or {}
+        late = {
+            k: p for k, p in old_presses.items()
+            if k != STARTER_KEY and p and int(p["ts"]) > ts_val
+        }
+        started_ts = (old_presses.get(STARTER_KEY) or {}).get("ts")
+        if late and started_ts is not None and ts_val - int(started_ts) >= STARTER_STOP_MIN_MS:
+            # Der Lauf wirkte nur komplett, weil Stopps des naechsten Laufs vorab eintrafen:
+            # dieser Druck ist das Lauf-Ende, die spaeten Stopps gehoeren zum naechsten Lauf
+            for late_lane, late_press in late.items():
+                late_offset = int((st.get("clock_offsets") or {}).get(late_press["mac"], 0))
+                raw_ts = int(late_press["ts"]) - (late_offset if abs(late_offset) > CLOCK_OFFSET_MIN_MS else 0)
+                old_presses[late_lane] = None
+                _defer_press(st, late_press["mac"], raw_ts)
+            st["triggers_per_run"][current_key] = old_presses
+            stopped = set(st.get("stopped_by_starter") or [])
+            stopped.add(current_key)
+            st["stopped_by_starter"] = sorted(stopped)
+            st.setdefault("starter_stop_ts", {})[current_key] = ts_val  # type: ignore[typeddict-item]
+            save_state(st)
+            return jsonify({"ok": True, "stopped": True, "run_key": current_key})
         _advance_run(st)
         current_run = st["current_run"]
         current_attempt = int(st.get("current_attempt") or 1)
@@ -2294,6 +2315,16 @@ def _handle_trigger(st: State, payload: dict[str, Any], replay: bool = False):
         st["stopped_by_starter"] = sorted(stopped)
         st.setdefault("starter_stop_ts", {})[current_key] = ts_val  # type: ignore[typeddict-item]
         st["run_finished_ts"] = now_ms()
+        # Bahn-Stopps nach dem Lauf-Ende (nach Pi-Ausfall vor dem Starter-Stopp eingetroffen)
+        # gehoeren zum naechsten Lauf
+        for late_lane, late_press in list(triggers_per_run[current_key].items()):
+            if late_lane == STARTER_KEY or not late_press or int(late_press["ts"]) <= ts_val:
+                continue
+            late_offset = int((st.get("clock_offsets") or {}).get(late_press["mac"], 0))
+            raw_ts = int(late_press["ts"]) - (late_offset if abs(late_offset) > CLOCK_OFFSET_MIN_MS else 0)
+            triggers_per_run[current_key][late_lane] = None
+            _defer_press(st, late_press["mac"], raw_ts)
+        st["triggers_per_run"] = triggers_per_run
         save_state(st)
         _write_heats_xml(st)
         logger.info(f"Run {current_key} stopped by second starter press")
@@ -2336,6 +2367,13 @@ def _handle_trigger(st: State, payload: dict[str, Any], replay: bool = False):
             return jsonify({"ok": True, "ignored": True, "reason": "stop_lockout"})
     # Abort double press
     if triggers_per_run[current_key][lane]:
+        first_ts = int(triggers_per_run[current_key][lane]["ts"])
+        if lane != STARTER_KEY and test_lane is None and payload.get("ts") is not None \
+                and ts_val - first_ts > START_DEVIATION_WINDOW_MS:
+            # Zweiter Druck dieser Bahn viel spaeter: gehoert zum naechsten Lauf, dessen Starter-Stopp/Start fehlt noch
+            _defer_press(st, mac_norm, int(payload["ts"]))
+            save_state(st)
+            return jsonify({"ok": True, "deferred": True, "reason": "next_run_not_started"})
         return jsonify({"ok": False, "error": "Double press detected."}), 400
     # Reject lanes which are not in the current run, except STARTER
     if lane != STARTER_KEY and lane not in lanes_in_run:

@@ -76,6 +76,15 @@ class OfflineReplayTests(unittest.TestCase):
         self.press("L2", 24_000)
         self.assertEqual(self.lane_time(5, "2"), 14_000)
 
+    def test_next_run_stop_arriving_before_starter_stop_moves_to_next_run(self):
+        self.press("AA", 10_000)
+        self.press("L1", 20_000)
+        self.press("L2", 50_000)  # eigentlich Lauf 6, kam vor dem Starter-Stopp an
+        self.press("AA", 25_000)
+        self.assertIsNone(self.state["triggers_per_run"]["5"].get("2"))
+        self.press("AA", 40_000)
+        self.assertEqual(self.lane_time(6, "2"), 10_000)
+
     def test_unrelated_old_press_is_not_counted(self):
         self.press("L1", 1_000)
         self.press("AA", 10_000)

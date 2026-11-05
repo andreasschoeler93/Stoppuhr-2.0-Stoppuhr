@@ -5,6 +5,7 @@ Jede Version ist als Git-Tag `vX.Y.Z` markiert und kann in der Weboberfläche un
 
 | Version | Datum | Änderung |
 |---|---|---|
+| v0.33.1 | 2026-11-05 | Nach Pi-Ausfall: Stopps des nächsten Laufs, die vor dem Starter-Stopp eintreffen, zählen nicht mehr zum alten Lauf. Der Starter beendet den Lauf auch, wenn eine Bahn nie gestoppt wurde. |
 | v0.33.0 | 2026-11-05 | `/api/display` liefert `max_lane` (höchste Bahn der Startkarten), damit der Ziel-Taster bei Pi-Ausfall so viele Uhren zeigen kann. |
 | v0.32.0 | 2026-11-05 | Nachgelieferte Taster-Drücke nach Pi-Ausfall: Drücke werden nach ihrem Zeitstempel einem Lauf zugeordnet, nicht nach Ankunftsreihenfolge. Kommt der Stopp einer Bahn vor dem Start (jeder Taster sendet aus seiner eigenen Warteschlange), wird er vorgemerkt und nach dem Start eingeordnet, statt mit 400 verworfen zu werden. Stopps, die nach dem Ende des Laufs (Starter-Stopp oder alle Bahnen) liegen, gehören zum nächsten Lauf. Benötigt Taster-Firmware, die den Zeitstempel beim Druck festhält. |
 | v0.31.0 | 2026-11-04 | Startseite: aufklappbare „Startabweichung“. Bahntaster, die kurz vor (bis 3 s) oder innerhalb der Stopp-Sperre nach dem Starter gedrückt werden, werden nicht als Zeit gewertet, aber je Bahn als Zeitunterschied zum Starter angezeigt (auch im Archiv unter `start_deviation`). |
