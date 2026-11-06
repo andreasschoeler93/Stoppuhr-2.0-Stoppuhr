@@ -9,6 +9,8 @@ KEY: Final[str] = "CHARGER_STATUS"
 SLOT_COUNT: Final[int] = 10
 # Die Platine sendet alle 5 s; danach gilt sie als offline
 OFFLINE_AFTER_MS: Final[int] = 30_000
+# Die Meldung "Ladevorgang beendet" bleibt so lange stehen
+ENDED_SHOWN_MS: Final[int] = 30 * 60_000
 LIGHTS: Final[frozenset[str]] = frozenset({"off", "green", "yellow", "yellow_blink", "red", "red_blink"})
 
 # Letzter Stand im Speicher, falls Redis gerade nicht schreibbar ist (z. B. Kopie im Zwei-Pi-Betrieb)
@@ -46,11 +48,10 @@ def sanitize(payload: Any) -> Optional[dict[str, Any]]:
             continue
         slots[n] = {
             "n": n,
-            "present": raw.get("present") is True,
             "charging": raw.get("charging") is True,
-            "full": raw.get("full") is True,
             "fault": raw.get("fault") is True,
             "vbat": _num(raw.get("vbat"), 0, 10),
+            "since_s": _int(raw.get("since_s"), 0, 10**9),
         }
     light = payload.get("light")
     return {
@@ -119,12 +120,9 @@ def evaluate(status: Optional[dict[str, Any]], now_ms: int) -> dict[str, Any]:
     """Leitet aus dem Stand Zustand und Statusmeldungen ab (level: error, warn, info, ok)."""
     if not status:
         return {"known": False, "online": False, "state": "unbekannt", "status": None, "messages": [],
-                "counts": {"present": 0, "charging": 0, "full": 0, "missing": []}}
+                "counts": {"charging": 0}}
     slots = {s["n"]: s for s in status.get("slots", [])}
-    present = [n for n, s in slots.items() if s["present"]]
-    charging = [n for n, s in slots.items() if s["charging"]]
-    full = [n for n, s in slots.items() if s["full"]]
-    missing = [n for n in range(1, SLOT_COUNT + 1) if n not in present]
+    charging = sorted(n for n, s in slots.items() if s["charging"])
     age = max(0, now_ms - int(status.get("ts") or 0))
     online = age <= OFFLINE_AFTER_MS
     messages: list[dict[str, str]] = []
@@ -152,21 +150,16 @@ def evaluate(status: Optional[dict[str, Any]], now_ms: int) -> dict[str, Any]:
             state = "fehler"
         elif charging:
             state = "laedt"
-        elif len(present) == SLOT_COUNT and len(full) == SLOT_COUNT:
-            state = "bereit"
         else:
-            state = "teilweise"
+            state = "ruhig"
 
-        if len(present) == SLOT_COUNT and len(full) == SLOT_COUNT and not has_error:
-            messages.append({"level": "ok", "text": f"Alle {SLOT_COUNT} Taster sind geladen."})
-        else:
-            if missing:
-                messages.append({"level": "info", "text": "Nicht im Koffer: Platz " + ", ".join(map(str, missing)) + "."})
-            if charging:
-                messages.append({"level": "info", "text": f"{len(charging)} Taster laden noch: Platz " + ", ".join(map(str, charging)) + "."})
-            idle = [n for n in present if n not in full and n not in charging]
-            if idle:
-                messages.append({"level": "info", "text": "Eingesetzt, aber nicht voll und lädt nicht: Platz " + ", ".join(map(str, idle)) + "."})
+        # Sicher messbar ist nur "laedt" (rote LED des Lademoduls); "da" und "voll" nicht
+        if charging:
+            messages.append({"level": "info", "text": "Es wird geladen: Platz " + ", ".join(map(str, charging)) + "."})
+        for n in sorted(slots):
+            since = slots[n].get("since_s")
+            if not slots[n]["charging"] and since is not None and since * 1000 + age <= ENDED_SHOWN_MS:
+                messages.append({"level": "info", "text": f"Platz {n}: Ladevorgang beendet (vor {_age_text(since * 1000 + age)})."})
 
     return {
         "known": True,
@@ -175,5 +168,5 @@ def evaluate(status: Optional[dict[str, Any]], now_ms: int) -> dict[str, Any]:
         "age_ms": age,
         "status": status,
         "messages": messages,
-        "counts": {"present": len(present), "charging": len(charging), "full": len(full), "missing": missing},
+        "counts": {"charging": len(charging)},
     }

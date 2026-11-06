@@ -41,8 +41,8 @@ class FakeRedis:
         return self.data.get(key)
 
 
-def slot(n, present=True, charging=False, full=True, fault=False, vbat=4.15):
-    return {"n": n, "present": present, "charging": charging, "full": full, "fault": fault, "vbat": vbat}
+def slot(n, charging=False, fault=False, vbat=4.15, since_s=None):
+    return {"n": n, "charging": charging, "fault": fault, "vbat": vbat, "since_s": since_s}
 
 
 def payload(**over):
@@ -80,21 +80,26 @@ class EvaluateTests(unittest.TestCase):
     def test_unknown(self):
         self.assertFalse(ladekoffer.evaluate(None, self.NOW)["known"])
 
-    def test_ready(self):
+    def test_idle(self):
         e = ladekoffer.evaluate(self._status(), self.NOW + 1000)
-        self.assertEqual(e["state"], "bereit")
-        self.assertEqual(e["messages"], [{"level": "ok", "text": "Alle 10 Taster sind geladen."}])
+        self.assertEqual(e["state"], "ruhig")
+        self.assertEqual(e["messages"], [])
 
-    def test_charging_and_missing(self):
+    def test_charging(self):
         slots = [slot(n) for n in range(1, 11)]
-        slots[1] = slot(2, charging=True, full=False, vbat=3.8)
-        slots[4] = slot(5, present=False, full=False, vbat=0.0)
+        slots[1] = slot(2, charging=True, vbat=3.8)
         e = ladekoffer.evaluate(self._status(slots=slots), self.NOW)
         self.assertEqual(e["state"], "laedt")
-        self.assertEqual(e["counts"], {"present": 9, "charging": 1, "full": 8, "missing": [5]})
-        texts = [m["text"] for m in e["messages"]]
-        self.assertIn("Nicht im Koffer: Platz 5.", texts)
-        self.assertIn("1 Taster laden noch: Platz 2.", texts)
+        self.assertEqual(e["counts"], {"charging": 1})
+        self.assertEqual([m["text"] for m in e["messages"]], ["Es wird geladen: Platz 2."])
+
+    def test_charge_ended_message(self):
+        slots = [slot(n) for n in range(1, 11)]
+        slots[2] = slot(3, since_s=120)
+        e = ladekoffer.evaluate(self._status(slots=slots), self.NOW)
+        self.assertEqual([m["text"] for m in e["messages"]], ["Platz 3: Ladevorgang beendet (vor 2 Min.)."])
+        slots[2] = slot(3, since_s=7200)
+        self.assertEqual(ladekoffer.evaluate(self._status(slots=slots), self.NOW)["messages"], [])
 
     def test_temperature_alarm_is_error(self):
         e = ladekoffer.evaluate(self._status(temp_alarm=True, fault=True, temp=61.2, light="red"), self.NOW)
@@ -140,7 +145,7 @@ class EndpointTests(unittest.TestCase):
         self.client.post("/api/charger", json=payload())
         body = self.client.get("/api/charger").get_json()
         self.assertTrue(body["known"] and body["online"])
-        self.assertEqual(body["state"], "bereit")
+        self.assertEqual(body["state"], "ruhig")
         self.assertLess(abs(body["status"]["ts"] - int(time.time() * 1000)), 5000)
         self.assertEqual(
             vitals_history.history_charger(self.redis),
@@ -187,8 +192,8 @@ class EndpointTests(unittest.TestCase):
         self.client.post("/api/charger", json=payload(wake_active=True))
         self.assertEqual(self.client.post("/api/charger/wake", json={"slot": 1}).status_code, 409)
 
-        empty_slots = [slot(n, present=n != 1) for n in range(1, 11)]
-        self.client.post("/api/charger", json=payload(slots=empty_slots))
+        unknown_slots = [slot(n) for n in range(2, 11)]
+        self.client.post("/api/charger", json=payload(slots=unknown_slots))
         self.assertEqual(self.client.post("/api/charger/wake", json={"slot": 1}).status_code, 409)
 
         faulty_slots = [slot(n, fault=n == 2) for n in range(1, 11)]

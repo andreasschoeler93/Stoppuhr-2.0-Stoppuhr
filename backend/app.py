@@ -1,6 +1,6 @@
 # ----------------------------------------
 # Stoppuhr Webserver
-# Version: v0.34.0
+# Version: v0.35.0
 # Status: stable-beta
 # ----------------------------------------
 
@@ -43,7 +43,7 @@ import node_names
 from xml_writer import create_xml_heats
 
 
-APP_VERSION: Final[str] = "0.34.0"
+APP_VERSION: Final[str] = "0.35.0"
 DEFAULT_PORT: Final[int] = 1999  # Since JAuswertung expected this port
 EXIT_ERROR: Final[int] = 1
 STATE_KEY: Final[str] = "STATE"
@@ -1152,8 +1152,8 @@ def api_request_charger_wake() -> ResponseReturnValue:
         return jsonify({"ok": False, "error": "Der Ladekoffer führt gerade einen Weckvorgang aus."}), 409
 
     charger_slot = next((item for item in charger_status.get("slots", []) if item["n"] == slot), None)
-    if not charger_slot or not charger_slot["present"]:
-        return jsonify({"ok": False, "error": f"Auf Platz {slot} ist kein Taster eingesetzt."}), 409
+    if not charger_slot:
+        return jsonify({"ok": False, "error": f"Platz {slot} ist beim Ladekoffer unbekannt."}), 409
     if charger_slot["fault"]:
         return jsonify({"ok": False, "error": f"Platz {slot} meldet einen Fehler."}), 409
 

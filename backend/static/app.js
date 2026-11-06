@@ -335,9 +335,8 @@ function vitalsStatusHtml() {
 // Ladekoffer: Status der Ladeplatine (kommt per WLAN an den Pi, GET /api/charger)
 let chargerData = null;
 const CHARGER_STATE = {
-  bereit: ["text-bg-success", "Ladekoffer: bereit"],
+  ruhig: ["text-bg-secondary", "Ladekoffer: kein Ladevorgang"],
   laedt: ["text-bg-warning", "Ladekoffer: lädt"],
-  teilweise: ["text-bg-warning", "Ladekoffer: nicht komplett"],
   fehler: ["text-bg-danger", "Ladekoffer: Fehler"],
   offline: ["text-bg-secondary", "Ladekoffer: offline"],
 };
@@ -484,13 +483,14 @@ function chargerStatusHtml() {
   const s = chargerData.status, slots = {};
   s.slots.forEach(x => { slots[x.n] = x; });
   const num = (v, dec, unit) => (v === null || v === undefined) ? "–" : `${Number(v).toFixed(dec)} ${unit}`;
-  const cell = x => !x || !x.present ? '<span class="badge text-bg-secondary">fehlt</span>'
+  const since = x => (x && x.since_s !== null && x.since_s !== undefined) ? ` title="seit ${Math.round(x.since_s / 60)} Min."` : "";
+  const cell = x => !x ? "–"
     : x.fault ? '<span class="badge text-bg-danger">Fehler</span>'
-    : x.charging ? '<span class="badge text-bg-warning">lädt</span>'
-    : x.full ? '<span class="badge text-bg-success">voll</span>' : '<span class="badge text-bg-light text-dark">da</span>';
+    : x.charging ? `<span class="badge text-bg-warning"${since(x)}>lädt</span>`
+    : `<span class="badge text-bg-light text-dark"${since(x)}>lädt nicht</span>`;
   const nums = Array.from({ length: 10 }, (_, i) => i + 1);
   const head = nums.map(n => `<th class="text-center">${n}</th>`).join("");
-  const rows = [["Zustand", x => cell(x)], ["Spannung", x => x && x.present ? num(x.vbat, 2, "V") : "–"]];
+  const rows = [["Zustand", x => cell(x)], ["Spannung", x => x ? num(x.vbat, 2, "V") : "–"]];
   const body = rows.map(([name, f]) => `<tr><th class="text-nowrap fw-normal">${name}</th>${
     nums.map(n => `<td class="text-center text-nowrap">${f(slots[n])}</td>`).join("")}</tr>`).join("");
   const [cls, label] = CHARGER_STATE[chargerData.state] || CHARGER_STATE.offline;
