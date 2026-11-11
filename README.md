@@ -1,4 +1,4 @@
-# Stoppuhr – Pi-Software (v0.35.0)
+# Stoppuhr – Pi-Software (v0.36.0)
 
 Webbasierte Wettkampf-Stoppuhr: ESP32-Taster messen die Zeit, der Raspberry Pi sammelt, wertet aus und
 liefert die Ergebnisse an JAuswertung. Die Taster-Firmware liegt im Repository `Taster`.
@@ -130,6 +130,8 @@ Hinweise:
 Diese laden sie vom Pi, prüfen die MD5 und starten neu. Ohne Internet stehen bereits gespeicherte Versionen zur Verfügung.
 
 - Angeboten werden nur Releases ab `v0.11.0`.
+- Das Update geht nur an Taster ohne Aufgabe (keiner Bahn, dem Starter oder dem Ziel zugeordnet, auch nicht vorgemerkt); zugeordnete Taster sind in der Liste grau. Ein Taster, der nach dem Verteilen zugeordnet wird, bekommt die Datei nicht mehr (ab v0.36.0).
+- Während des Updates hält der Ladekoffer alle Startkontakte eingeschaltet, damit sich die Taster nicht ausschalten (Ladekoffer-Firmware ab v0.7.17). Die Zeit stellt man unter Einstellungen → „Startkontakte bei Taster-Update einschalten (s)“ ein (Standard 300, 0 = aus); sie endet früher, sobald alle Taster fertig sind. Der Pi meldet sie dem Koffer als `ota_hold_ms` in der Antwort auf `POST /api/charger`.
 - Gesperrt, sobald ein Lauf gestartet wurde (nur mit `UPDATE`); ein Taster bekommt die Datei nie während eines Laufs.
 - Fehlgeschlagene Updates stehen in der Tabelle. Releases entstehen automatisch, wenn im Taster-Repo ein Tag `vX.Y.Z` hochgeladen wird.
 
