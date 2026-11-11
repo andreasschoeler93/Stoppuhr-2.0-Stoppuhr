@@ -17,6 +17,8 @@ CHARGER_FIELDS: Final[tuple[str, ...]] = ("temp", "humidity")
 CHARGER_MAX_POINTS: Final[int] = KEEP_HOURS * 720 + 120
 CHARGER_SLOTS_KEY: Final[str] = "CHARGER_SLOTS_HIST"
 CHARGER_SLOT_COUNT: Final[int] = 10
+CHARGER_BACKFILL_MAX_AGE_MS: Final[int] = 2 * 60 * 60 * 1000
+CHARGER_BACKFILL_BATCH_SIZE: Final[int] = 60
 
 
 def _num(value: Any) -> float | None:
@@ -153,6 +155,31 @@ def add_charger_slots(r: Any, ts_ms: int, status: dict[str, Any]) -> None:
         pipe.execute()
     except Exception:  # noqa: BLE001
         pass
+
+
+def add_charger_slot_backfill(r: Any, received_ms: int, samples: Any) -> None:
+    """Speichert gueltige gepufferte Messungen anhand ihres Alters beim Empfang."""
+    if not isinstance(samples, list):
+        return
+    for sample in samples[:CHARGER_BACKFILL_BATCH_SIZE]:
+        if not isinstance(sample, list) or len(sample) != 2:
+            continue
+        age_ms, values = sample
+        if (isinstance(age_ms, bool) or not isinstance(age_ms, int)
+                or not 0 <= age_ms <= CHARGER_BACKFILL_MAX_AGE_MS
+                or not isinstance(values, list) or len(values) != CHARGER_SLOT_COUNT):
+            continue
+        slots = []
+        valid = True
+        for n, value in enumerate(values, 1):
+            if value is not None and (
+                isinstance(value, bool) or not isinstance(value, (int, float)) or not 0 <= value <= 10
+            ):
+                valid = False
+                break
+            slots.append({"n": n, "vbat": value})
+        if valid:
+            add_charger_slots(r, received_ms - age_ms, {"slots": slots})
 
 
 def history_charger_slots(r: Any, since_ms: int = 0) -> list[list[Any]]:

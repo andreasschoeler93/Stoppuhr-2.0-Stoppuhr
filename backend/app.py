@@ -1,6 +1,6 @@
 # ----------------------------------------
 # Stoppuhr Webserver
-# Version: v0.41.1
+# Version: v0.41.2
 # Status: stable-beta
 # ----------------------------------------
 
@@ -43,7 +43,7 @@ import node_names
 from xml_writer import create_xml_heats
 
 
-APP_VERSION: Final[str] = "0.41.1"
+APP_VERSION: Final[str] = "0.41.2"
 DEFAULT_PORT: Final[int] = 1999  # Since JAuswertung expected this port
 EXIT_ERROR: Final[int] = 1
 STATE_KEY: Final[str] = "STATE"
@@ -1079,6 +1079,7 @@ def api_post_charger():
     status["ts"] = now_ms()
     ladekoffer.save(redis_store, status)
     vitals_history.add_charger(redis_store, status["ts"], status)
+    vitals_history.add_charger_slot_backfill(redis_store, status["ts"], payload.get("voltage_history"))
     vitals_history.add_charger_slots(redis_store, status["ts"], status)
     try:
         st = load_state()

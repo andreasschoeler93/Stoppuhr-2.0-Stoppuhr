@@ -1,4 +1,4 @@
-# Stoppuhr – Pi-Software (v0.41.1)
+# Stoppuhr – Pi-Software (v0.41.2)
 
 Webbasierte Wettkampf-Stoppuhr: ESP32-Taster messen die Zeit, der Raspberry Pi sammelt, wertet aus und
 liefert die Ergebnisse an JAuswertung. Die Taster-Firmware liegt im Repository `Taster`.
@@ -21,6 +21,7 @@ Versionsverlauf: [CHANGELOG.md](CHANGELOG.md). Zwei-Pi-Betrieb (Koffer und Bad):
   Schnittstelle: `GET /api/vitals/history?mac=…&hours=…`.
 - Ladekoffer (ab v0.12.0): Die Ladeplatine (Projekt `Ladekoffer`) sendet alle 5 s per `POST /api/charger` (JSON) Ladezustand („lädt“ / „lädt nicht“) und Spannung der 10 Plätze, Temperatur, Luftfeuchte und Ampel. Der Pi wertet daraus Statusmeldungen aus (Kopfzeile, Meldungen oben, Tabelle im Tab „Vitaldaten“). „Taster da“ und „voll“ lassen sich mit dem TP4056-Modul nicht erkennen und werden nicht angezeigt (ab v0.35.0). Nach 30 s ohne Meldung gilt der Ladekoffer als offline. `GET /api/charger` liefert den ausgewerteten Zustand. Unter Einstellungen lassen sich Ladeplätze einzeln wecken (Pi ab v0.24.0, Ladekoffer-Firmware ab v0.6.0).
 - Unter dem Ladekoffer-Status im Tab „Vitaldaten“ zeigt ein Diagramm die Akkuspannung aller zehn Ladeplätze über die Zeit; die Kurven lassen sich wie die anderen Vitaldaten per Legende einzeln ein- und ausblenden.
+- Bei WLAN-/Pi-Unterbrechungen puffert die Ladekoffer-Firmware ab v0.7.19 die Spannungsmessungen bis zu einer Stunde im RAM und liefert sie nach Wiederverbindung nach. Der Pi speichert diese Messwerte mit dem ursprünglichen Zeitpunkt (ab v0.41.2); der Puffer übersteht keinen Neustart oder Stromausfall des Koffers.
 - Die Oberfläche hat vier Seiten: **Stoppuhr**, **Vitaldaten** (inklusive Systemstatus), **Archiv** und **Einstellungen**. JAuswertung-Startkarten werden in den Einstellungen geladen; dort kann die IP des aufrufenden Geräts übernommen werden. Koffer-Temperatur und -Luftfeuchte sind ebenfalls als Verlauf sichtbar.
 
 ## Installation

@@ -142,7 +142,7 @@ class EndpointTests(unittest.TestCase):
     def test_roundtrip(self):
         stopwatch.app.config["AUTH_DISABLED"] = True
         self.assertFalse(self.client.get("/api/charger").get_json()["known"])
-        self.client.post("/api/charger", json=payload())
+        self.client.post("/api/charger", json=payload(voltage_history=[[5000, [3.8] * 10]]))
         body = self.client.get("/api/charger").get_json()
         self.assertTrue(body["known"] and body["online"])
         self.assertEqual(body["state"], "ruhig")
@@ -151,6 +151,10 @@ class EndpointTests(unittest.TestCase):
             vitals_history.history_charger(self.redis),
             [[body["status"]["ts"], 24.5, 40.0]],
         )
+        history = vitals_history.history_charger_slots(self.redis)
+        self.assertEqual(len(history), 2)
+        self.assertEqual(history[0][1:], [3.8] * 10)
+        self.assertAlmostEqual(body["status"]["ts"] - history[0][0], 5000, delta=1000)
 
     def test_invalid_payload(self):
         self.assertEqual(self.client.post("/api/charger", json={"x": 1}).status_code, 400)

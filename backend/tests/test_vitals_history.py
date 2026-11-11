@@ -73,6 +73,15 @@ class VitalsHistoryTest(unittest.TestCase):
         )
         self.assertEqual(vitals_history.history_charger_slots(r)[0][:4], [1000, 3.8, None, 4.1])
 
+    def test_charger_slot_backfill(self):
+        r = FakeRedis()
+        values = [3.8, None, 4.1] + [None] * 7
+        vitals_history.add_charger_slot_backfill(r, 10_000, [[5000, values], [True, values], [5000, [11] * 10]])
+        self.assertEqual(
+            vitals_history.history_charger_slots(r),
+            [[5000, 3.8, None, 4.1, None, None, None, None, None, None, None]],
+        )
+
     def test_errors_ignored(self):
         vitals_history.add(object(), "AA", 1, {})
         self.assertEqual(vitals_history.history(object(), "AA"), [])
