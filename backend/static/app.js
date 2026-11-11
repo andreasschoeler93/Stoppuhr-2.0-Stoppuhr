@@ -1089,7 +1089,8 @@ async function loadSettingsIntoUI() {
   byId("chargerWakePinsInput").value = s.charger_wake_pins ?? "8,9,10,11,12,13,14,15,0,1";
   byId("chargerWakeMsInput").value = s.charger_wake_ms ?? "3000";
   byId("chargerWakeGapInput").value = s.charger_wake_gap_ms ?? "1000";
-  const rangeOn = s.range_test_on === "1";
+    byId("chargerOtaHoldInput").value = s.charger_ota_hold_s ?? "300";
+    const rangeOn = s.range_test_on === "1";
   if (document.activeElement !== byId("rangeTestLetter")) byId("rangeTestLetter").value = s.range_test_letter || "";
   byId("btnRangeTest").textContent = rangeOn ? "Funktest beenden" : "Funktest starten";
   byId("btnRangeTest").classList.toggle("btn-danger", rangeOn);
@@ -1618,6 +1619,8 @@ function renderButtonList() {
 
     const letter = btn.letter || "?";
     const assigned = btn.role === "starter" || btn.role === "finish" || (btn.role === "bahn" && btn.lane != null);
+    const inUse = assigned || !!btn.pending_lane || !!slotInfo.slot;
+    if (inUse) div.classList.add("in-use");
     const lvl = tasterLevel(btn, assigned);
     if (lvl) div.classList.add("lvl-" + lvl);
     const unassignHtml = assigned
@@ -1996,7 +1999,8 @@ async function init() {
         alert_red_every_s: byId("alertRedEveryInput").value,
         charger_wake_pins: byId("chargerWakePinsInput").value,
         charger_wake_ms: byId("chargerWakeMsInput").value,
-        charger_wake_gap_ms: byId("chargerWakeGapInput").value
+        charger_wake_gap_ms: byId("chargerWakeGapInput").value,
+        charger_ota_hold_s: byId("chargerOtaHoldInput").value
       });
       // mirror to main tab
       await loadSettingsIntoUI();

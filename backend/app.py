@@ -1,6 +1,6 @@
 # ----------------------------------------
 # Stoppuhr Webserver
-# Version: v0.35.0
+# Version: v0.36.0
 # Status: stable-beta
 # ----------------------------------------
 
@@ -43,7 +43,7 @@ import node_names
 from xml_writer import create_xml_heats
 
 
-APP_VERSION: Final[str] = "0.35.0"
+APP_VERSION: Final[str] = "0.36.0"
 DEFAULT_PORT: Final[int] = 1999  # Since JAuswertung expected this port
 EXIT_ERROR: Final[int] = 1
 STATE_KEY: Final[str] = "STATE"
@@ -593,6 +593,7 @@ def api_set_settings() -> ResponseReturnValue:
         ("alert_red_every_s", 1, 3600),
         ("charger_wake_ms", 500, 30_000),
         ("charger_wake_gap_ms", 100, 30_000),
+        ("charger_ota_hold_s", 0, 3600),
     ):
         if key in payload:
             try:
@@ -1122,6 +1123,7 @@ def api_post_charger():
             if pending else None
         )
         ota = charger_firmware.offer(redis_store, str(status.get("fw") or ""))
+        reply["ota_hold_ms"] = _ota_hold_ms(st)
     except redis.RedisError:
         logger.warning("Redis nicht erreichbar; Ladekoffer-Status wird nur im Arbeitsspeicher gehalten")
         st = _default_state()
@@ -1582,10 +1584,31 @@ def _load_ota() -> Optional[dict[str, Any]]:
     return json.loads(raw) if raw else None
 
 
+def _taster_has_task(st: State, mac: str) -> bool:
+    """True, wenn der Taster einer Bahn (oder dem Starter) zugeordnet oder dafuer vorgemerkt ist."""
+    assignments = st.get("assignments") or {}
+    return mac in (assignments.get("mapping") or {}).values() or mac in (assignments.get("pending") or {}).values()
+
+
+def _ota_hold_ms(st: State) -> int:
+    """Restzeit in ms, in der der Ladekoffer alle Startkontakte fuer das Taster-Update eingeschaltet halten soll."""
+    target = _load_ota()
+    hold_s = _int_setting(st, "charger_ota_hold_s", 300)
+    if not target or hold_s <= 0:
+        return 0
+    fws = {m: (st.get("vitals") or {}).get(m, {}).get("fw") for m in target.get("macs", [])}
+    failed = {m for m, s in (target.get("status") or {}).items() if s.get("state") == "failed"}
+    if all(fw == target["tag"] or m in failed for m, fw in fws.items()):
+        return 0
+    return max(0, int(target.get("ts") or 0) + hold_s * 1000 - now_ms())
+
+
 def _ota_offer_for(st: State, mac: str) -> dict[str, Any]:
     """Firmware-Angebot fuer einen Taster (Felder von /api/display); leer, wenn keins ansteht."""
     target = _load_ota()
     if not target or not mac or mac not in target.get("macs", []):
+        return {}
+    if _taster_has_task(st, mac):
         return {}
     if (target.get("status") or {}).get(mac, {}).get("state") == "failed":
         return {}
@@ -1776,7 +1799,7 @@ def api_firmware_deploy():
     macs = [
         t["mac"]
         for t in (_taster_with_vitals(t, st.get("vitals") or {}) for t in st.get("tasters", []))
-        if t.get("online") and t.get("fw") != tag
+        if t.get("online") and t.get("fw") != tag and not _taster_has_task(st, t["mac"])
     ]
     target = {"tag": tag, "md5": info["md5"], "size": info["size"], "macs": macs, "status": {}, "ts": now_ms()}
     redis_store.set(OTA_KEY, json.dumps(target))

@@ -19,6 +19,8 @@
     @media (max-width: 991.98px) { .wake-slot-grid { grid-template-columns: repeat(5, minmax(0, 1fr)); } }
     @media (max-width: 575.98px) { .wake-slot-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
     .taster-card { border-radius: .5rem; border: 1px solid #dee2e6; padding: .5rem .75rem; margin-bottom: .5rem; background:#fff; cursor: grab; }
+    .taster-card.in-use { background: #f1f3f5; border-color: #adb5bd; }
+    .taster-card.in-use .taster-header > span:first-child { color: #6c757d; }
     .taster-card.dragging { opacity: .6; }
     .taster-header { display:flex; justify-content:space-between; align-items:center; font-weight:600; font-size:.95rem; }
     .taster-mac { font-size:.75rem; color:#6c757d; }
@@ -170,6 +172,7 @@
                 <h2 class="h6 mb-0">Taster (Drag & Drop)</h2>
                 <button class="btn btn-sm btn-outline-secondary" id="btnRefreshTaster">Aktualisieren</button>
               </div>
+              <div class="text-muted small mb-2">Zugeordnete Taster sind grau markiert.</div>
               <div class="text-muted small mb-2" id="tasterLastRefresh">Letzte Aktualisierung: –</div>
               <div id="tasterList" class="flex-grow-1 overflow-auto"></div>
             </div>
@@ -357,6 +360,11 @@
             <div class="col-md-6">
               <label class="form-label">Abstand zwischen den Slots (ms)</label>
               <input type="number" min="100" max="30000" step="100" id="chargerWakeGapInput" class="form-control" value="1000">
+            </div>
+            <div class="col-md-6">
+              <label class="form-label">Startkontakte bei Taster-Update einschalten (s)</label>
+              <input type="number" min="0" max="3600" step="10" id="chargerOtaHoldInput" class="form-control" value="300">
+              <div class="form-text">So lange nach dem Verteilen eines Taster-Updates hält der Koffer alle Startkontakte an, damit sich die Taster nicht ausschalten. 0 = aus. Endet früher, sobald alle Taster fertig sind.</div>
             </div>
             <div class="col-12">
               <div class="form-check">

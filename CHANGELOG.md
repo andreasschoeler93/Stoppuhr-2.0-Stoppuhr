@@ -5,6 +5,7 @@ Jede Version ist als Git-Tag `vX.Y.Z` markiert und kann in der Weboberfläche un
 
 | Version | Datum | Änderung |
 |---|---|---|
+| v0.36.0 | 2026-11-11 | Taster-Firmware-Update geht nur noch an Taster ohne Aufgabe (keiner Bahn, dem Starter oder dem Ziel zugeordnet). Neue Einstellung „Startkontakte bei Taster-Update einschalten (s)“ (Standard 300): Die Antwort an den Ladekoffer enthält `ota_hold_ms`, damit er alle Startkontakte hält, bis die Taster fertig sind. Benötigt eine Koffer-Firmware, die `ota_hold_ms` auswertet. Zugeordnete Taster sind in der Liste grau. |
 | v0.35.0 | 2026-11-06 | Ladekoffer-Anzeige nur mit sicher messbaren Werten (Koffer-Firmware ab v0.7.16): je Platz „lädt“ / „lädt nicht“ und Spannung; „Taster da“, „voll“ und „nicht komplett“ entfallen (das TP4056-Modul liefert ohne Akku ca. 4 V). Zustände des Koffers: fehler, lädt, kein Ladevorgang. Neue Meldung „Platz n: Ladevorgang beendet“ (30 Min. lang). Einzel-Wecken ist nicht mehr an „Taster eingesetzt“ gebunden. |
 | v0.34.0 | 2026-11-05 | Lauf gilt als beendet, wenn alle Bahnen mit zugewiesenem Taster gestoppt haben (Bahnen ohne Taster blockieren nicht mehr). Starter mit Zieleinlauf: Lauf endet auch, wenn so viele Zieleinlauf-Drücke wie Bahnen eingegangen sind; Zuordnung nach Zeitstempel (wichtig bei nachgelieferten Drücken). `/api/display` liefert `combo`. |
 | v0.33.1 | 2026-11-05 | Nach Pi-Ausfall: Stopps des nächsten Laufs, die vor dem Starter-Stopp eintreffen, zählen nicht mehr zum alten Lauf. Der Starter beendet den Lauf auch, wenn eine Bahn nie gestoppt wurde. |
