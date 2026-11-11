@@ -1,6 +1,6 @@
 # ----------------------------------------
 # Stoppuhr Webserver
-# Version: v0.41.2
+# Version: v0.41.3
 # Status: stable-beta
 # ----------------------------------------
 
@@ -43,7 +43,7 @@ import node_names
 from xml_writer import create_xml_heats
 
 
-APP_VERSION: Final[str] = "0.41.2"
+APP_VERSION: Final[str] = "0.41.3"
 DEFAULT_PORT: Final[int] = 1999  # Since JAuswertung expected this port
 EXIT_ERROR: Final[int] = 1
 STATE_KEY: Final[str] = "STATE"
@@ -1085,6 +1085,26 @@ def api_post_charger():
         st = load_state()
         reply: dict[str, Any] = {"ok": True, "wake": _wake_config(st), "beep": _beep_config(st)}
         now = status["ts"]
+        if payload.get("sleep_unassigned") is True:
+            grace_s = max(1, _int_setting(st, "shutdown_grace_s", 10))
+            sleeping = {
+                mac: until
+                for mac, until in (st.get("sleep_until") or {}).items()  # type: ignore[attr-defined]
+                if int(until) > now
+            }
+            targets = [
+                str(t["mac"])
+                for t in st.get("tasters", [])
+                if t.get("mac") and not _taster_has_task(st, str(t["mac"]))
+            ]
+            for mac in targets:
+                sleeping[mac] = now + grace_s * 1000
+            if targets:
+                st["sleep_until"] = sleeping  # type: ignore[typeddict-unknown-key]
+                save_state(st)
+            reply["sleep_unassigned_ack"] = True
+            reply["sleep_unassigned_count"] = len(targets)
+            logger.info("Ladekoffer: %d nicht zugeordnete Taster werden schlafen geschickt", len(targets))
         pending = st.get("charger_manual_wake")
         wake_ack = payload.get("wake_ack") if isinstance(payload, dict) else None
         if pending and wake_ack == pending.get("id"):

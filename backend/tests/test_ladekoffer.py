@@ -156,6 +156,27 @@ class EndpointTests(unittest.TestCase):
         self.assertEqual(history[0][1:], [3.8] * 10)
         self.assertAlmostEqual(body["status"]["ts"] - history[0][0], 5000, delta=1000)
 
+    def test_long_press_sleeps_only_tasters_without_a_role(self):
+        stopwatch.app.config["AUTH_DISABLED"] = True
+        state = stopwatch._default_state()
+        state["tasters"] = [
+            {"mac": "A", "letter": "A"},
+            {"mac": "B", "letter": "B"},
+            {"mac": "C", "letter": "C"},
+            {"mac": "D", "letter": "D"},
+        ]
+        state["assignments"]["mapping"] = {"starter": "A", "1": "B"}
+        state["assignments"]["pending"] = {"2": "D"}
+        state["settings"]["shutdown_grace_s"] = "10"
+        with patch.object(stopwatch, "load_state", return_value=state), \
+             patch.object(stopwatch, "save_state") as save_state, \
+             patch.object(stopwatch, "now_ms", return_value=100_000):
+            response = self.client.post("/api/charger", json=payload(sleep_unassigned=True))
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.get_json()["sleep_unassigned_count"], 1)
+        self.assertEqual(state["sleep_until"], {"C": 110_000})
+        save_state.assert_called_once_with(state)
+
     def test_invalid_payload(self):
         self.assertEqual(self.client.post("/api/charger", json={"x": 1}).status_code, 400)
 
