@@ -15,6 +15,8 @@ PI_FIELDS: Final[tuple[str, ...]] = ("cpu_temp", "cpu_percent", "mem_percent")
 CHARGER_KEY: Final[str] = "CHARGER_HIST"
 CHARGER_FIELDS: Final[tuple[str, ...]] = ("temp", "humidity")
 CHARGER_MAX_POINTS: Final[int] = KEEP_HOURS * 720 + 120
+CHARGER_SLOTS_KEY: Final[str] = "CHARGER_SLOTS_HIST"
+CHARGER_SLOT_COUNT: Final[int] = 10
 
 
 def _num(value: Any) -> float | None:
@@ -134,6 +136,37 @@ def history_charger(r: Any, since_ms: int = 0) -> list[list[Any]]:
         except ValueError:
             continue
         if isinstance(point, list) and len(point) == len(CHARGER_FIELDS) + 1 and point[0] >= since_ms:
+            points.append(point)
+    return points
+
+
+def add_charger_slots(r: Any, ts_ms: int, status: dict[str, Any]) -> None:
+    """Haengt die Akkuspannung je Ladeplatz als [Zeit, Platz 1, ..., Platz 10] an."""
+    try:
+        slots = {slot["n"]: slot for slot in status.get("slots", [])}
+        if not slots:
+            return
+        point = [ts_ms] + [_num((slots.get(n) or {}).get("vbat")) for n in range(1, CHARGER_SLOT_COUNT + 1)]
+        pipe = r.pipeline()
+        pipe.rpush(CHARGER_SLOTS_KEY, json.dumps(point, separators=(",", ":")))
+        pipe.ltrim(CHARGER_SLOTS_KEY, -CHARGER_MAX_POINTS, -1)
+        pipe.execute()
+    except Exception:  # noqa: BLE001
+        pass
+
+
+def history_charger_slots(r: Any, since_ms: int = 0) -> list[list[Any]]:
+    try:
+        raw = r.lrange(CHARGER_SLOTS_KEY, 0, -1)
+    except Exception:  # noqa: BLE001
+        return []
+    points: list[list[Any]] = []
+    for item in raw:
+        try:
+            point = json.loads(item)
+        except ValueError:
+            continue
+        if isinstance(point, list) and len(point) == CHARGER_SLOT_COUNT + 1 and point[0] >= since_ms:
             points.append(point)
     return points
 

@@ -41,6 +41,7 @@ const PI_CHARTS = [
 const PI_COLORS = { "Koffer-Pi": "#0d6efd", "Bad-Pi": "#fd7e14", "Pi": "#0d6efd" };
 let vitalsData = null;
 let chargerSeries = [];
+let chargerVoltageSeries = [];
 // Per Klick auf die Legende ausgeblendete Kurven (nach Name), bleibt im Browser gespeichert
 const hiddenSeries = new Set(JSON.parse(localStorage.getItem("vitalsHidden") || "[]"));
 function toggleSeries(label) {
@@ -91,7 +92,14 @@ function buildArchiveVitals(a) {
   chargerSeries = a.charger?.length
     ? [{ label: "Ladekoffer", color: "#20a4a8", points: a.charger.map(([ts, temp, humidity]) => [ts, null, null, temp, humidity, null]) }]
     : [];
-  const stamps = series.concat(piSeries, chargerSeries).flatMap(s => s.points.map(p => p[0]));
+  chargerVoltageSeries = (a.charger_slots || []).length
+    ? Array.from({ length: 10 }, (_, i) => ({
+      label: `Ladeplatz ${i + 1}`,
+      color: TASTER_COLORS[i],
+      points: a.charger_slots.map(point => [point[0], point[i + 1]]),
+    }))
+    : [];
+  const stamps = series.concat(piSeries, chargerSeries, chargerVoltageSeries).flatMap(s => s.points.map(p => p[0]));
   const first = stamps.length ? Math.min(...stamps) : (a.since_ts || a.ended_ts);
   vitalsArchive = { id: a.id, name: a.name, ended_ts: a.ended_ts, first_ts: first, series, piSeries, starts: a.starts || [] };
   vitalsEnd = null;
@@ -133,6 +141,13 @@ async function refreshVitals() {
   const piSeries = piNodes.map(n => ({ label: n.name, color: PI_COLORS[n.name] || "#0d6efd", points: n.points || [] }));
   chargerSeries = pi.charger?.length
     ? [{ label: "Ladekoffer", color: "#20a4a8", points: pi.charger.map(([ts, temp, humidity]) => [ts, null, null, temp, humidity, null]) }]
+    : [];
+  chargerVoltageSeries = (pi.charger_slots || []).length
+    ? Array.from({ length: 10 }, (_, i) => ({
+      label: `Ladeplatz ${i + 1}`,
+      color: TASTER_COLORS[i],
+      points: pi.charger_slots.map(point => [point[0], point[i + 1]]),
+    }))
     : [];
   vitalsData = { hours, t1: vitalsEnd, series, starts: starts || [], tasters: list, piNodes, piSeries };
   byId("vitalsRange").textContent = vitalsEnd ? vitalsRangeText(t1, win) : "";
@@ -508,7 +523,13 @@ function chargerStatusHtml() {
   const info = `Temperatur ${colored(s.temp, 1, "°C", lim.temp)} · Luftfeuchte ${colored(s.humidity, 0, "%", lim.humidity)} · WLAN ${colored(s.rssi, 0, "dBm", lim.rssi)} · Firmware ${escapeHtml(s.fw || "–")}`;
   return `<div class="mt-3"><strong class="small">Ladekoffer</strong> <span class="badge ${cls}">${label.replace("Ladekoffer: ", "")}</span>
     <div class="table-responsive mt-1"><table class="table table-sm align-middle mb-0"><thead><tr><th>Platz</th>${head}</tr></thead><tbody>${body}</tbody></table></div>
-    <div class="small text-muted mt-1">${info}</div>${msgs}</div>`;
+    <div class="small text-muted mt-1">${info}</div>${msgs}${chargerVoltageChartHtml()}</div>`;
+}
+
+function chargerVoltageChartHtml() {
+  return chargerVoltageSeries.length
+    ? `<div class="mt-3"><strong class="small">Spannungsverlauf je Ladeplatz (V)</strong><canvas id="vc-charger-voltage" style="width:100%;height:180px"></canvas></div>`
+    : "";
 }
 
 function drawVitals() {
@@ -525,7 +546,8 @@ function drawVitals() {
   }
   info.innerHTML = (s.length ? s.map(legend).join("") : "Noch kein Taster angemeldet.")
     + (vitalsData.piSeries.length ? ' <span class="text-muted me-2">|</span>' + vitalsData.piSeries.map(legend).join("") : "")
-    + (chargerSeries.length ? ' <span class="text-muted me-2">|</span>' + chargerSeries.map(legend).join("") : "");
+    + (chargerSeries.length ? ' <span class="text-muted me-2">|</span>' + chargerSeries.map(legend).join("") : "")
+    + (chargerVoltageSeries.length ? ' <span class="text-muted me-2">|</span>' + chargerVoltageSeries.map(legend).join("") : "");
   if (!box.children.length) {
     box.innerHTML = VITAL_CHARTS.concat(PI_CHARTS).map(c => `<div class="col-lg-6"><div class="card"><div class="card-body p-2">
       <strong class="small">${c.title} (${c.unit})</strong>
@@ -534,8 +556,11 @@ function drawVitals() {
       <strong class="small">Zustand der Taster und Pis</strong><div id="vitalsStatus" class="mt-1"></div></div></div></div>`;
   }
   byId("vitalsStatus").innerHTML = vitalsData.archive
-    ? '<span class="text-muted small">Archivierter Wettkampf – der aktuelle Zustand wird nicht angezeigt.</span>'
+    ? '<span class="text-muted small">Archivierter Wettkampf – der aktuelle Zustand wird nicht angezeigt.</span>' + chargerVoltageChartHtml()
     : vitalsStatusHtml() + piStatusHtml() + chargerStatusHtml();
+  if (chargerVoltageSeries.length) {
+    drawVitalChart({ id: "charger-voltage", idx: 1, title: "Ladekoffer – Akkuspannung je Ladeplatz", unit: "V", decimals: 2 }, chargerVoltageSeries);
+  }
   VITAL_CHARTS.forEach(c => drawVitalChart(c, s));
   PI_CHARTS.forEach(c => drawVitalChart(c, vitalsData.piSeries));
 }

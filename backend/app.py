@@ -1,6 +1,6 @@
 # ----------------------------------------
 # Stoppuhr Webserver
-# Version: v0.39.0
+# Version: v0.40.0
 # Status: stable-beta
 # ----------------------------------------
 
@@ -43,7 +43,7 @@ import node_names
 from xml_writer import create_xml_heats
 
 
-APP_VERSION: Final[str] = "0.39.0"
+APP_VERSION: Final[str] = "0.40.0"
 DEFAULT_PORT: Final[int] = 1999  # Since JAuswertung expected this port
 EXIT_ERROR: Final[int] = 1
 STATE_KEY: Final[str] = "STATE"
@@ -738,6 +738,7 @@ def _archive_competition(st: State, name: str) -> str:
         },
         "pi": {n: vitals_history.history_pi(redis_store, n, since) for n in ("Koffer-Pi", "Bad-Pi", "Pi")},
         "charger": vitals_history.history_charger(redis_store, since),
+        "charger_slots": vitals_history.history_charger_slots(redis_store, since),
         "starts": vitals_history.starts(redis_store, since),
         "raw": {
             key: st.get(key)
@@ -1078,6 +1079,7 @@ def api_post_charger():
     status["ts"] = now_ms()
     ladekoffer.save(redis_store, status)
     vitals_history.add_charger(redis_store, status["ts"], status)
+    vitals_history.add_charger_slots(redis_store, status["ts"], status)
     try:
         st = load_state()
         reply: dict[str, Any] = {"ok": True, "wake": _wake_config(st), "beep": _beep_config(st)}
@@ -1358,7 +1360,8 @@ def api_vitals_pi():
         })
     return jsonify({"fields": list(vitals_history.PI_FIELDS), "nodes": nodes,
                     "starts": vitals_history.starts(redis_store, since),
-                    "charger": vitals_history.history_charger(redis_store, since)})
+                    "charger": vitals_history.history_charger(redis_store, since),
+                    "charger_slots": vitals_history.history_charger_slots(redis_store, since)})
 
 
 def _pi_name(node: dict[str, Any]) -> str:
