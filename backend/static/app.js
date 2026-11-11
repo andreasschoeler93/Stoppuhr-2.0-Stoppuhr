@@ -27,19 +27,27 @@ let maxLane = 0;
 // Vitaldaten-Diagramme (Canvas, ohne Bibliothek)
 // -----------------------------
 const VITAL_CHARTS = [
-  { idx: 1, title: "Akku", unit: "%", color: "#198754", min: 0, max: 100 },
-  { idx: 2, title: "Akkuspannung", unit: "V", color: "#0d6efd", decimals: 2 },
-  { idx: 3, title: "Temperatur", unit: "°C", color: "#dc3545", decimals: 1 },
-  { idx: 4, title: "Luftfeuchte", unit: "%", color: "#0dcaf0", decimals: 0, min: 0, max: 100 },
-  { idx: 5, title: "WLAN-Stärke", unit: "dBm", color: "#6f42c1", decimals: 0 },
+  { idx: 1, title: "Akku", unit: "%", color: "#198754", min: 0, max: 100, limits: [["taster", "battery"]] },
+  { idx: 2, title: "Akkuspannung", unit: "V", color: "#0d6efd", decimals: 2, limits: [["taster", "vbat"]] },
+  { idx: 3, title: "Temperatur", unit: "°C", color: "#dc3545", decimals: 1, limits: [["taster", "temp"]] },
+  { idx: 4, title: "Luftfeuchte", unit: "%", color: "#0dcaf0", decimals: 0, min: 0, max: 100, limits: [["taster", "humidity"]] },
+  { idx: 5, title: "WLAN-Stärke", unit: "dBm", color: "#6f42c1", decimals: 0, limits: [["taster", "rssi"]] },
 ];
 // Pi-Diagramme: idx zeigt auf die Spalte im Pi-Messpunkt [ts, CPU-Temperatur, CPU-Last, Speicher]
 const PI_CHARTS = [
-  { id: "pi1", idx: 1, idx2: 2, title: "Pi CPU-Temperatur (durchgezogen) und CPU-Last (gestrichelt)", unit: "°C / %", pi: true, min: 0, max: 100 },
+  { id: "pi1", idx: 1, idx2: 2, title: "Pi CPU-Temperatur (durchgezogen) und CPU-Last (gestrichelt)", unit: "°C / %", pi: true, min: 0, max: 100,
+    limits: [["pi", "cpu_temp"], ["pi", "cpu_percent"]] },
 ];
 const PI_COLORS = { "Koffer-Pi": "#0d6efd", "Bad-Pi": "#fd7e14", "Pi": "#0d6efd" };
 let vitalsData = null;
 let chargerSeries = [];
+// Per Klick auf die Legende ausgeblendete Kurven (nach Name), bleibt im Browser gespeichert
+const hiddenSeries = new Set(JSON.parse(localStorage.getItem("vitalsHidden") || "[]"));
+function toggleSeries(label) {
+  if (!hiddenSeries.delete(label)) hiddenSeries.add(label);
+  localStorage.setItem("vitalsHidden", JSON.stringify([...hiddenSeries]));
+  drawVitals();
+}
 const TASTER_COLORS = ["#0d6efd", "#dc3545", "#198754", "#fd7e14", "#6f42c1", "#0dcaf0", "#d63384", "#795548", "#6c757d", "#20c997"];
 
 let vitalsEnd = null;      // Ende des Zeitfensters in ms; null = jetzt (live)
@@ -506,8 +514,16 @@ function chargerStatusHtml() {
 function drawVitals() {
   const box = byId("vitalsCharts");
   const s = vitalsData.series;
-  const legend = x => `<span class="me-3"><span style="display:inline-block;width:12px;height:12px;border-radius:2px;background:${x.color};vertical-align:-1px"></span> ${escapeHtml(x.label)}</span>`;
-  byId("vitalsInfo").innerHTML = (s.length ? s.map(legend).join("") : "Noch kein Taster angemeldet.")
+  const legend = x => `<span class="me-3 vitals-legend" role="button" data-series="${escapeHtml(x.label)}" title="Klicken zum Ein-/Ausblenden" style="cursor:pointer;user-select:none;${hiddenSeries.has(x.label) ? "opacity:.4;text-decoration:line-through;" : ""}"><span style="display:inline-block;width:12px;height:12px;border-radius:2px;background:${x.color};vertical-align:-1px"></span> ${escapeHtml(x.label)}</span>`;
+  const info = byId("vitalsInfo");
+  if (!info.dataset.bound) {
+    info.dataset.bound = "1";
+    info.addEventListener("click", e => {
+      const el = e.target.closest("[data-series]");
+      if (el) toggleSeries(el.dataset.series);
+    });
+  }
+  info.innerHTML = (s.length ? s.map(legend).join("") : "Noch kein Taster angemeldet.")
     + (vitalsData.piSeries.length ? ' <span class="text-muted me-2">|</span>' + vitalsData.piSeries.map(legend).join("") : "")
     + (chargerSeries.length ? ' <span class="text-muted me-2">|</span>' + chargerSeries.map(legend).join("") : "");
   if (!box.children.length) {
@@ -535,7 +551,8 @@ function drawVitalChart(c, series) {
   g.clearRect(0, 0, w, h);
   const cols = c.idx2 ? [[c.idx, false], [c.idx2, true]] : [[c.idx, false]];
   const t1 = vitalsData.t1 ?? Date.now(), t0 = t1 - vitalsData.hours * 3600 * 1000;
-  const lines = cols.flatMap(([ci, dash]) => (ci === 3 || ci === 4 ? series.concat(chargerSeries) : series).map(s => ({
+  const shown = list => list.filter(s => !hiddenSeries.has(s.label));
+  const lines = cols.flatMap(([ci, dash]) => shown(ci === 3 || ci === 4 ? series.concat(chargerSeries) : series).map(s => ({
     dash, color: s.color,
     data: s.points.filter(p => p[ci] !== null && p[0] >= t0 && p[0] <= t1).map(p => [p[0], p[ci]]),
   })));
@@ -549,6 +566,20 @@ function drawVitalChart(c, series) {
   const L = 42, R = 8, T = 8, B = 20;
   const x = t => L + (t - t0) / (t1 - t0) * (w - L - R);
   const y = v => T + (1 - (v - lo) / (hi - lo)) * (h - T - B);
+  // Grenzbereiche ganz zart als Hintergrund: gelb = Warnbereich, rot = kritischer Bereich
+  (c.limits || []).forEach(([group, key]) => {
+    const rule = LIMITS[group] && LIMITS[group][key];
+    if (!rule) return;
+    const band = (from, to, color) => {
+      const a = Math.max(lo, Math.min(from, to)), b = Math.min(hi, Math.max(from, to));
+      if (b <= a) return;
+      g.fillStyle = color;
+      g.fillRect(L, y(b), w - L - R, y(a) - y(b));
+    };
+    const yellow = "rgba(255, 193, 7, 0.09)", red = "rgba(220, 53, 69, 0.07)";
+    if (rule.low) { band(rule.low[1], rule.low[0], yellow); band(-Infinity, rule.low[1], red); }
+    if (rule.high) { band(rule.high[0], rule.high[1], yellow); band(rule.high[1], Infinity, red); }
+  });
   g.font = "11px sans-serif"; g.strokeStyle = "#e5e5e5"; g.fillStyle = "#666"; g.lineWidth = 1;
   for (let i = 0; i <= 4; i++) {
     const v = lo + (hi - lo) * i / 4, yy = y(v);
