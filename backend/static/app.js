@@ -410,19 +410,46 @@ async function refreshChargerFw() {
   const err = byId("chargerFwError");
   err.textContent = d.error || "";
   err.classList.toggle("d-none", !d.error);
+  return d;
 }
 
 async function deployChargerFw() {
   const tag = byId("chargerFwSelect").value, msg = byId("chargerFwMsg");
   if (!tag) return;
-  msg.className = "small text-muted"; msg.textContent = `Lade ${tag} von GitHub …`;
+  const btn = byId("btnChargerFwDeploy");
+  const originalLabel = btn.textContent;
+  let offered = false;
+  btn.disabled = true;
+  btn.textContent = "Wird bereitgestellt …";
+  msg.className = "small text-muted mt-2";
+  msg.textContent = `Lade ${tag} von GitHub und stelle die Firmware bereit …`;
   try {
-    await apiPost("/api/charger-firmware/deploy", { tag });
-    msg.className = "small text-success";
-    msg.textContent = `Version ${tag} bereitgestellt. Der Koffer holt sie beim nächsten Melden.`;
-    await refreshChargerFw();
+    const result = await apiPost("/api/charger-firmware/deploy", { tag });
+    if (result.uploaded?.version !== tag) throw new Error("Der Pi hat nicht die ausgewählte Firmware-Version bereitgestellt.");
+    offered = true;
+    msg.className = "small text-muted mt-2";
+    msg.textContent = `Version ${tag} bereitgestellt. Warte auf Download und Neustart des Koffers …`;
+    btn.textContent = "Warte auf Koffer …";
+    for (let attempt = 0; attempt < 36; attempt++) {
+      await new Promise(resolve => setTimeout(resolve, 5000));
+      const state = await refreshChargerFw();
+      if (state.running === tag) {
+        msg.className = "small text-success mt-2";
+        msg.textContent = `Erfolgreich: Der Koffer läuft jetzt mit ${tag}.`;
+        return;
+      }
+    }
+    const state = await refreshChargerFw();
+    msg.className = "small text-warning mt-2";
+    msg.textContent = `Noch nicht bestätigt: bereitgestellt ist ${tag}, der Koffer meldet weiterhin ${state.running || "keine Version"}. Bitte Verbindung prüfen und später erneut versuchen.`;
   } catch (e) {
-    msg.className = "small text-danger"; msg.textContent = "Fehlgeschlagen: " + e.message;
+    msg.className = "small text-danger mt-2";
+    msg.textContent = offered
+      ? `Version ${tag} ist bereitgestellt, der Kofferstatus konnte aber nicht bestätigt werden: ${e.message}`
+      : "Fehlgeschlagen: " + e.message;
+  } finally {
+    btn.disabled = false;
+    btn.textContent = originalLabel;
   }
 }
 
@@ -916,9 +943,17 @@ function updatePiTargets() {
   const c = clusterInfo;
   const ownKind = c?.self?.kind || "";
   const peerKind = c?.peer?.kind || (ownKind === "bad" ? "koffer" : ownKind === "koffer" ? "bad" : "");
+  const twoPi = Boolean(c?.two_pi);
   byId("piTitle_self").textContent = c?.two_pi ? `${piKindName(ownKind)} (dieser Pi)` : "Dieser Pi";
   byId("piTitle_peer").textContent = `${piKindName(peerKind)} (Partner)${c?.peer?.reachable === false ? " – nicht erreichbar" : ""}`;
-  byId("piCol_peer").classList.toggle("d-none", !c?.two_pi);
+  byId("piCol_peer").classList.toggle("d-none", !twoPi);
+  for (const id of ["piCol_self", "chargerFwCard", "piCol_peer"]) {
+    const col = byId(id);
+    col.classList.toggle("col-md-6", !twoPi);
+    col.classList.toggle("col-md-4", twoPi);
+    col.classList.toggle("col-xl-6", !twoPi);
+    col.classList.toggle("col-xl-4", twoPi);
+  }
 }
 
 const PI_SIDES = ["self", "peer"];

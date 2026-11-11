@@ -1,4 +1,4 @@
-# Stoppuhr – Pi-Software (v0.41.4)
+# Stoppuhr – Pi-Software (v0.41.5)
 
 Webbasierte Wettkampf-Stoppuhr: ESP32-Taster messen die Zeit, der Raspberry Pi sammelt, wertet aus und
 liefert die Ergebnisse an JAuswertung. Die Taster-Firmware liegt im Repository `Taster`.
@@ -24,6 +24,7 @@ Versionsverlauf: [CHANGELOG.md](CHANGELOG.md). Zwei-Pi-Betrieb (Koffer und Bad):
 - Bei WLAN-/Pi-Unterbrechungen puffert die Ladekoffer-Firmware ab v0.7.19 die Spannungsmessungen bis zu einer Stunde im RAM und liefert sie nach Wiederverbindung nach. Der Pi speichert diese Messwerte mit dem ursprünglichen Zeitpunkt (ab v0.41.2); der Puffer übersteht keinen Neustart oder Stromausfall des Koffers.
 - Ladekoffer-Firmware ab v0.7.20 kann nach einem 15-Sekunden-Druck am Koffer alle Taster ohne zugeordnete oder vorgemerkte Rolle ausschalten.
 - Unter Einstellungen → „Ladekoffer: Taster aufwecken“ lässt sich die Slot-Aufweckreihenfolge einstellen (Pi ab v0.41.4, Koffer ab v0.7.21). Die Pinbelegung der aktuellen Koffer-Platine ist fest; das alte Pin-Einstellfeld wird von aktueller Firmware ignoriert.
+- Unter Einstellungen → „Software und Firmware“ stehen im Zwei-Pi-Betrieb beide Pi-Versionen und die Ladekoffer-Firmware nebeneinander. Das Koffer-Update wird wie bei den Pis mit „Übernehmen und neu starten“ gestartet; die Oberfläche meldet, wenn die neue Version läuft oder nicht bestätigt werden kann.
 - Die Oberfläche hat vier Seiten: **Stoppuhr**, **Vitaldaten** (inklusive Systemstatus), **Archiv** und **Einstellungen**. JAuswertung-Startkarten werden in den Einstellungen geladen; dort kann die IP des aufrufenden Geräts übernommen werden. Koffer-Temperatur und -Luftfeuchte sind ebenfalls als Verlauf sichtbar.
 
 ## Installation

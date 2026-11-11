@@ -5,6 +5,7 @@ Jede Version ist als Git-Tag `vX.Y.Z` markiert und kann in der Weboberfläche un
 
 | Version | Datum | Änderung |
 |---|---|---|
+| v0.41.5 | 2026-11-11 | Einstellungen → Software und Firmware: Beide Pi-Versionen und die Ladekoffer-Firmware stehen nebeneinander. Koffer-Update startet wie bei den Pis per „Übernehmen und neu starten“; die Oberfläche wartet auf die bestätigte laufende Version und meldet ausbleibende Updates. |
 | v0.41.4 | 2026-11-11 | Einstellungen → Ladekoffer: eigene Slot-Aufweckreihenfolge (jede Slotnummer 1–10 genau einmal); die Platinen-Pinbelegung bleibt fest. Benötigt Ladekoffer-Firmware ab v0.7.21. |
 | v0.41.3 | 2026-11-11 | Ladekoffer: Verarbeitet den 15-Sekunden-Tastendruck zum Ausschalten aller Taster ohne zugeordnete oder vorgemerkte Rolle; benötigt Koffer-Firmware ab v0.7.20. |
 | v0.41.2 | 2026-11-11 | Vitaldaten: Der Pi speichert nachgelieferte Spannungsmessungen des Ladekoffers mit ihrem ursprünglichen Messzeitpunkt. Benötigt Ladekoffer-Firmware ab v0.7.19. |

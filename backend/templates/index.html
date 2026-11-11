@@ -565,63 +565,61 @@
           <details class="mb-3">
             <summary class="settings-summary">Software und Firmware <span class="badge text-bg-warning ms-2 d-none" id="updateSummaryBadge">Updates verfügbar</span></summary>
             <div class="alert alert-warning py-2 small d-none" id="updateHints"></div>
-            <div class="card mt-2 mb-3" id="piUpdateCard">
-        <div class="card-body">
-          <h2 class="h6 mb-2">Pi-Software</h2>
-          <div class="row g-3">
-            <div class="col-md-6" id="piCol_self">
-              <div class="border rounded p-2 h-100">
-                <div class="fw-semibold" id="piTitle_self">Dieser Pi</div>
-                <div class="small mb-2">Läuft: <strong id="piCurrent_self">–</strong> <span class="badge text-bg-warning d-none" id="piNew_self"></span></div>
-                <label class="form-label" for="piSelect_self">Version</label>
-                <select id="piSelect_self" class="form-select form-select-sm mb-2"></select>
-                <button class="btn btn-primary btn-sm" id="btnPiDeploy_self">Übernehmen und neu starten</button>
-                <div class="text-danger small d-none" id="piError_self"></div>
+            <div class="row g-3 mt-2 mb-3" id="softwareUpdateRow">
+              <div class="col-12 col-md-6 col-xl-6" id="piCol_self">
+                <div class="card h-100" id="piUpdateCard">
+                  <div class="card-body">
+                    <h2 class="h6 mb-2">Pi-Software</h2>
+                    <div class="fw-semibold" id="piTitle_self">Dieser Pi</div>
+                    <div class="small mb-2">Läuft: <strong id="piCurrent_self">–</strong> <span class="badge text-bg-warning d-none" id="piNew_self"></span></div>
+                    <label class="form-label" for="piSelect_self">Version</label>
+                    <select id="piSelect_self" class="form-select form-select-sm mb-2"></select>
+                    <button class="btn btn-primary btn-sm" id="btnPiDeploy_self">Übernehmen und neu starten</button>
+                    <div class="text-danger small d-none" id="piError_self"></div>
+                    <div class="mt-2"><button class="btn btn-outline-secondary btn-sm" id="btnPiReload">Neu laden</button></div>
+                    <div class="form-text">Wechselt nur diesen Pi. Der Dienst ist danach kurz nicht erreichbar. Nie während eines laufenden Laufs.</div>
+                    <div class="text-danger small d-none" id="piLocked">Der Wettkampf läuft bereits. Ein Wechsel ist nur mit ausdrücklicher Bestätigung möglich.</div>
+                  </div>
+                </div>
               </div>
-            </div>
-            <div class="col-md-6 d-none" id="piCol_peer">
-              <div class="border rounded p-2 h-100">
-                <div class="fw-semibold" id="piTitle_peer">Partner-Pi</div>
-                <div class="small mb-2">Läuft: <strong id="piCurrent_peer">–</strong> <span class="badge text-bg-warning d-none" id="piNew_peer"></span></div>
-                <label class="form-label" for="piSelect_peer">Version</label>
-                <select id="piSelect_peer" class="form-select form-select-sm mb-2"></select>
-                <button class="btn btn-primary btn-sm" id="btnPiDeploy_peer">Übernehmen und neu starten</button>
-                <div class="text-danger small d-none" id="piError_peer"></div>
+              <div class="col-12 col-md-4 col-xl-4 d-none" id="piCol_peer">
+                <div class="card h-100">
+                  <div class="card-body">
+                    <h2 class="h6 mb-2">Pi-Software</h2>
+                    <div class="fw-semibold" id="piTitle_peer">Partner-Pi</div>
+                    <div class="small mb-2">Läuft: <strong id="piCurrent_peer">–</strong> <span class="badge text-bg-warning d-none" id="piNew_peer"></span></div>
+                    <label class="form-label" for="piSelect_peer">Version</label>
+                    <select id="piSelect_peer" class="form-select form-select-sm mb-2"></select>
+                    <button class="btn btn-primary btn-sm" id="btnPiDeploy_peer">Übernehmen und neu starten</button>
+                    <div class="text-danger small d-none" id="piError_peer"></div>
+                  </div>
+                </div>
               </div>
-            </div>
-          </div>
-          <div class="mt-2"><button class="btn btn-outline-secondary btn-sm" id="btnPiReload">Neu laden</button></div>
-          <div class="form-text">Wechselt nur den jeweiligen Pi. Dessen Dienst ist danach kurz (ca. 5 s) nicht erreichbar. Nie während eines laufenden Laufs.</div>
-          <div class="text-danger small d-none" id="piLocked">Der Wettkampf läuft bereits. Ein Wechsel ist nur mit ausdrücklicher Bestätigung möglich.</div>
-        </div>
-            </div>
-
-            <div class="card mb-3" id="chargerFwCard">
-        <div class="card-body">
-          <h2 class="h6 mb-2">Ladekoffer-Firmware</h2>
-          <div class="small mb-2">Läuft: <strong id="chargerFwRunning">–</strong> · Bereitgestellt: <strong id="chargerFwUploaded">–</strong></div>
-          <div class="row g-2 align-items-end">
-            <div class="col-md-6">
-              <label class="form-label" for="chargerFwSelect">Version</label>
-              <select id="chargerFwSelect" class="form-select"></select>
-            </div>
-            <div class="col-md-6 d-flex gap-2">
-              <button class="btn btn-primary btn-sm" id="btnChargerFwDeploy">Auf Koffer laden</button>
-              <button class="btn btn-outline-secondary btn-sm" id="btnChargerFwClear">Abbrechen</button>
-              <button class="btn btn-outline-secondary btn-sm" id="btnChargerFwReload">Neu laden</button>
-            </div>
-          </div>
-          <div class="form-text">Der Pi lädt die gewählte Version von GitHub. Der Koffer holt sie beim nächsten Melden (alle paar Sekunden), prüft sie und startet neu. Nie während eines laufenden Laufs. Die Version muss einmal per USB mit <code>secrets.h</code> geflasht worden sein (ab v0.5.0); danach merkt sich der Koffer das WLAN.</div>
-          <div class="text-danger small d-none" id="chargerFwError"></div>
-          <details class="mt-2">
-            <summary class="small">Eigene Datei hochladen (z. B. frisch gebaute <code>firmware.bin</code>)</summary>
-            <div class="d-flex flex-wrap gap-2 align-items-center mt-2">
-              <input type="file" class="form-control form-control-sm w-auto" id="chargerFwFile" accept=".bin">
-              <button class="btn btn-outline-primary btn-sm" id="btnChargerFwUpload">Hochladen und bereitstellen</button>
-            </div>
-          </details>
-          <div class="small d-none" id="chargerFwMsg"></div>
-        </div>
+              <div class="col-12 col-md-6 col-xl-6" id="chargerFwCard">
+                <div class="card h-100">
+                  <div class="card-body">
+                    <h2 class="h6 mb-2">Ladekoffer-Firmware</h2>
+                    <div class="small mb-2">Läuft: <strong id="chargerFwRunning">–</strong><br>Bereitgestellt: <strong id="chargerFwUploaded">nichts</strong></div>
+                    <label class="form-label" for="chargerFwSelect">Version</label>
+                    <select id="chargerFwSelect" class="form-select form-select-sm mb-2"></select>
+                    <button class="btn btn-primary btn-sm w-100" id="btnChargerFwDeploy">Übernehmen und neu starten</button>
+                    <div class="d-flex flex-wrap gap-2 mt-2">
+                      <button class="btn btn-outline-secondary btn-sm" id="btnChargerFwClear">Abbrechen</button>
+                      <button class="btn btn-outline-secondary btn-sm" id="btnChargerFwReload">Neu laden</button>
+                    </div>
+                    <div class="form-text">Der Pi lädt die gewählte Version und stellt sie dem Koffer bereit. Der Koffer lädt sie beim nächsten Melden, prüft sie und startet neu. Erste Inbetriebnahme ab v0.5.0 einmal per USB mit <code>secrets.h</code>; danach merkt sich der Koffer das WLAN.</div>
+                    <div class="text-danger small d-none" id="chargerFwError"></div>
+                    <details class="mt-2">
+                      <summary class="small">Eigene Datei hochladen (z. B. frisch gebaute <code>firmware.bin</code>)</summary>
+                      <div class="d-flex flex-wrap gap-2 align-items-center mt-2">
+                        <input type="file" class="form-control form-control-sm w-auto" id="chargerFwFile" accept=".bin">
+                        <button class="btn btn-outline-primary btn-sm" id="btnChargerFwUpload">Hochladen und bereitstellen</button>
+                      </div>
+                    </details>
+                    <div class="small d-none mt-2" id="chargerFwMsg" role="status" aria-live="polite"></div>
+                  </div>
+                </div>
+              </div>
             </div>
 
             <div class="card mb-3" id="firmwareCard">
