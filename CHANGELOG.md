@@ -5,6 +5,7 @@ Jede Version ist als Git-Tag `vX.Y.Z` markiert und kann in der Weboberfläche un
 
 | Version | Datum | Änderung |
 |---|---|---|
+| v0.41.4 | 2026-11-11 | Einstellungen → Ladekoffer: eigene Slot-Aufweckreihenfolge (jede Slotnummer 1–10 genau einmal); die Platinen-Pinbelegung bleibt fest. Benötigt Ladekoffer-Firmware ab v0.7.21. |
 | v0.41.3 | 2026-11-11 | Ladekoffer: Verarbeitet den 15-Sekunden-Tastendruck zum Ausschalten aller Taster ohne zugeordnete oder vorgemerkte Rolle; benötigt Koffer-Firmware ab v0.7.20. |
 | v0.41.2 | 2026-11-11 | Vitaldaten: Der Pi speichert nachgelieferte Spannungsmessungen des Ladekoffers mit ihrem ursprünglichen Messzeitpunkt. Benötigt Ladekoffer-Firmware ab v0.7.19. |
 | v0.41.1 | 2026-11-11 | Vitaldaten: Die Standardansicht zeigt jetzt die letzte Stunde statt der letzten 6 Stunden. |

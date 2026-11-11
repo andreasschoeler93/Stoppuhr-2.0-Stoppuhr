@@ -1153,6 +1153,7 @@ async function loadSettingsIntoUI() {
   byId("alertRedLenInput").value = s.alert_red_len_s ?? "2";
   byId("alertRedEveryInput").value = s.alert_red_every_s ?? "10";
   byId("chargerWakePinsInput").value = s.charger_wake_pins ?? "8,9,10,11,12,13,14,15,0,1";
+  byId("chargerWakeOrderInput").value = s.charger_wake_order ?? "1,2,3,4,5,6,7,8,9,10";
   byId("chargerWakeMsInput").value = s.charger_wake_ms ?? "3000";
   byId("chargerWakeGapInput").value = s.charger_wake_gap_ms ?? "1000";
     byId("chargerOtaHoldInput").value = s.charger_ota_hold_s ?? "300";
@@ -2126,6 +2127,7 @@ async function init() {
         alert_red_len_s: byId("alertRedLenInput").value,
         alert_red_every_s: byId("alertRedEveryInput").value,
         charger_wake_pins: byId("chargerWakePinsInput").value,
+        charger_wake_order: byId("chargerWakeOrderInput").value,
         charger_wake_ms: byId("chargerWakeMsInput").value,
         charger_wake_gap_ms: byId("chargerWakeGapInput").value,
         charger_ota_hold_s: byId("chargerOtaHoldInput").value

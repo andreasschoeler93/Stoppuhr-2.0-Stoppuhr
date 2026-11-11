@@ -1,6 +1,6 @@
 # ----------------------------------------
 # Stoppuhr Webserver
-# Version: v0.41.3
+# Version: v0.41.4
 # Status: stable-beta
 # ----------------------------------------
 
@@ -43,7 +43,7 @@ import node_names
 from xml_writer import create_xml_heats
 
 
-APP_VERSION: Final[str] = "0.41.3"
+APP_VERSION: Final[str] = "0.41.4"
 DEFAULT_PORT: Final[int] = 1999  # Since JAuswertung expected this port
 EXIT_ERROR: Final[int] = 1
 STATE_KEY: Final[str] = "STATE"
@@ -213,6 +213,7 @@ def _is_range_test_taster(st: State, mac: str) -> bool:
 
 
 DEFAULT_WAKE_PINS: Final[str] = "8,9,10,11,12,13,14,15,0,1"
+DEFAULT_WAKE_ORDER: Final[str] = "1,2,3,4,5,6,7,8,9,10"
 
 
 def _parse_wake_pins(value: Any) -> Optional[list[int]]:
@@ -226,11 +227,24 @@ def _parse_wake_pins(value: Any) -> Optional[list[int]]:
     return pins
 
 
+def _parse_wake_order(value: Any) -> Optional[list[int]]:
+    """Slotnummern in Weckreihenfolge; jede Slotnummer 1..10 muss genau einmal vorkommen."""
+    try:
+        order = [int(p) for p in str(value).replace(";", ",").replace(" ", ",").split(",") if p.strip()]
+    except ValueError:
+        return None
+    if len(order) != 10 or sorted(order) != list(range(1, 11)):
+        return None
+    return order
+
+
 def _wake_config(st: State) -> dict[str, Any]:
     """Wecksequenz des Ladekoffers; wird dem Koffer in der Antwort auf POST /api/charger mitgegeben."""
     pins = _parse_wake_pins(st.get("settings", {}).get("charger_wake_pins", DEFAULT_WAKE_PINS))
+    order = _parse_wake_order(st.get("settings", {}).get("charger_wake_order", DEFAULT_WAKE_ORDER))
     return {
         "pins": pins or _parse_wake_pins(DEFAULT_WAKE_PINS),
+        "order": order or _parse_wake_order(DEFAULT_WAKE_ORDER),
         "ms": _int_setting(st, "charger_wake_ms", 3000),
         "gap_ms": _int_setting(st, "charger_wake_gap_ms", 1000),
     }
@@ -608,6 +622,13 @@ def api_set_settings() -> ResponseReturnValue:
         if pins is None:
             return jsonify({"ok": False, "error": "charger_wake_pins: 10 Zahlen von 0 bis 15, durch Komma getrennt"}), 400
         settings["charger_wake_pins"] = ",".join(str(p) for p in pins)
+    if "charger_wake_order" in payload:
+        order = _parse_wake_order(payload["charger_wake_order"])
+        if order is None:
+            return jsonify(
+                {"ok": False, "error": "charger_wake_order: jede Slotnummer von 1 bis 10 genau einmal angeben"}
+            ), 400
+        settings["charger_wake_order"] = ",".join(str(slot) for slot in order)
     if "shutdown_grace_s" in payload:
         try:
             shutdown_grace_s = int(payload["shutdown_grace_s"])

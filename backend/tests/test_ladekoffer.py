@@ -185,7 +185,11 @@ class EndpointTests(unittest.TestCase):
         self.client.post("/api/charger", json=payload())
         self.client.post(
             "/api/settings",
-            json={"charger_wake_pins": "1,2,3,4,5,6,7,8,9,10", "charger_wake_ms": 1800},
+            json={
+                "charger_wake_pins": "1,2,3,4,5,6,7,8,9,10",
+                "charger_wake_order": "4,2,1,3,5,6,7,8,9,10",
+                "charger_wake_ms": 1800,
+            },
         )
 
         queued = self.client.post("/api/charger/wake", json={"slot": 4})
@@ -196,6 +200,7 @@ class EndpointTests(unittest.TestCase):
         reply = self.client.post("/api/charger", json=payload()).get_json()
         self.assertEqual(reply["manual_wake"], {"id": request_id, "slot": 4})
         self.assertEqual(reply["wake"]["pins"][3], 4)
+        self.assertEqual(reply["wake"]["order"], [4, 2, 1, 3, 5, 6, 7, 8, 9, 10])
         self.assertEqual(reply["wake"]["ms"], 1800)
 
         ack = self.client.post("/api/charger", json=payload(wake_ack=request_id)).get_json()
@@ -204,6 +209,13 @@ class EndpointTests(unittest.TestCase):
         result = self.client.get(f"/api/charger/wake/{request_id}")
         self.assertEqual(result.status_code, 200)
         self.assertEqual(result.get_json()["status"], "completed")
+
+    def test_wake_order_requires_each_slot_once(self):
+        stopwatch.app.config["AUTH_DISABLED"] = True
+        for order in ("1,2,3,4,5,6,7,8,9,9", "0,1,2,3,4,5,6,7,8,9", "1,2,3"):
+            with self.subTest(order=order):
+                response = self.client.post("/api/settings", json={"charger_wake_order": order})
+                self.assertEqual(response.status_code, 400)
 
     def test_manual_wake_validates_slot_and_charger_state(self):
         stopwatch.app.config["AUTH_DISABLED"] = True
