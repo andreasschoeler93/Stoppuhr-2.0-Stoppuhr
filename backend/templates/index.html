@@ -280,20 +280,31 @@
           <h2 class="h6 mb-2">Taster einzeln schlafen schicken</h2>
           <p class="text-muted small mb-3">
             Wähle einen Taster. Er schaltet sich beim nächsten Abruf aus und lässt sich danach nur im Ladekoffer
-            (oder per Magnet) wieder wecken. Zur Sicherheit muss sein Buchstabe nochmal eingegeben werden.
+            (oder per Magnet) wieder wecken. Die Bestätigung erfolgt in einem Popup durch erneute Eingabe des Buchstabens.
           </p>
           <div class="d-flex flex-wrap gap-2" id="sleepButtons" aria-label="Taster zum Schlafen schicken auswählen"></div>
-          <div class="row g-2 align-items-end mt-2 d-none" id="sleepConfirm">
-            <div class="col-auto">
-              <label class="form-label small mb-1" for="sleepConfirmInput">Zur Bestätigung Buchstaben von <strong id="sleepConfirmLetter"></strong> eingeben</label>
-              <input type="text" maxlength="1" id="sleepConfirmInput" class="form-control text-uppercase" style="width:5rem" autocomplete="off">
+          <div class="small text-muted mt-2" id="sleepStatus" role="status" aria-live="polite"></div>
+        </div>
+      </div>
+
+      <div class="modal fade" id="sleepConfirmModal" tabindex="-1" aria-labelledby="sleepConfirmTitle" aria-hidden="true">
+        <div class="modal-dialog modal-dialog-centered">
+          <div class="modal-content">
+            <div class="modal-header">
+              <h2 class="modal-title fs-5" id="sleepConfirmTitle">Taster schlafen schicken?</h2>
+              <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Schließen"></button>
             </div>
-            <div class="col-auto">
+            <div class="modal-body">
+              <p>Der Taster <strong id="sleepConfirmLetter"></strong> wird ausgeschaltet und lässt sich danach nur im Ladekoffer oder per Magnet wieder wecken.</p>
+              <label class="form-label" for="sleepConfirmInput">Zur Bestätigung den Buchstaben erneut eingeben</label>
+              <input type="text" maxlength="1" id="sleepConfirmInput" class="form-control text-uppercase" style="width:5rem" autocomplete="off">
+              <div class="small text-danger mt-2" id="sleepModalStatus" role="status" aria-live="polite"></div>
+            </div>
+            <div class="modal-footer">
+              <button class="btn btn-outline-secondary" type="button" data-bs-dismiss="modal">Abbrechen</button>
               <button class="btn btn-danger" type="button" id="btnSleepConfirm" disabled>Schlafen schicken</button>
-              <button class="btn btn-outline-secondary" type="button" id="btnSleepCancel">Abbrechen</button>
             </div>
           </div>
-          <div class="small text-muted mt-2" id="sleepStatus" role="status" aria-live="polite"></div>
         </div>
       </div>
 

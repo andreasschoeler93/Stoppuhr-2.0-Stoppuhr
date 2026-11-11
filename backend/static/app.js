@@ -1245,13 +1245,19 @@ function renderSleepButtons() {
 }
 
 function cancelSleep() {
+  bootstrap.Modal.getOrCreateInstance(byId("sleepConfirmModal")).hide();
+}
+
+function resetSleepConfirmation() {
   sleepPick = null;
-  byId("sleepConfirm").classList.add("d-none");
   byId("sleepConfirmInput").value = "";
   byId("btnSleepConfirm").disabled = true;
+  byId("sleepModalStatus").textContent = "";
 }
 
 function initSleepControls() {
+  const modalElement = byId("sleepConfirmModal");
+  const modal = bootstrap.Modal.getOrCreateInstance(modalElement);
   byId("sleepButtons").addEventListener("click", ev => {
     const b = ev.target.closest("[data-sleep-letter]");
     if (!b || b.disabled) return;
@@ -1259,25 +1265,27 @@ function initSleepControls() {
     byId("sleepConfirmLetter").textContent = sleepPick;
     byId("sleepConfirmInput").value = "";
     byId("btnSleepConfirm").disabled = true;
-    byId("sleepConfirm").classList.remove("d-none");
     byId("sleepStatus").textContent = "";
-    byId("sleepConfirmInput").focus();
+    byId("sleepModalStatus").textContent = "";
+    modal.show();
   });
+  modalElement.addEventListener("shown.bs.modal", () => byId("sleepConfirmInput").focus());
+  modalElement.addEventListener("hidden.bs.modal", resetSleepConfirmation);
   byId("sleepConfirmInput").addEventListener("input", ev => {
     byId("btnSleepConfirm").disabled = !sleepPick || ev.target.value.trim().toUpperCase() !== sleepPick.toUpperCase();
   });
-  byId("btnSleepCancel").addEventListener("click", cancelSleep);
   byId("btnSleepConfirm").addEventListener("click", async () => {
     const letter = sleepPick, status = byId("sleepStatus");
     if (!letter) return;
+    byId("btnSleepConfirm").disabled = true;
     try {
       await apiPost("/api/taster/sleep", { letter, confirm: byId("sleepConfirmInput").value });
       status.className = "small text-success mt-2";
       status.textContent = `Taster ${letter} wird ausgeschaltet.`;
-      cancelSleep();
+      modal.hide();
     } catch (e) {
-      status.className = "small text-danger mt-2";
-      status.textContent = `Taster ${letter}: ${e.message}`;
+      byId("sleepModalStatus").textContent = `Taster ${letter}: ${e.message}`;
+      byId("btnSleepConfirm").disabled = byId("sleepConfirmInput").value.trim().toUpperCase() !== letter.toUpperCase();
     }
   });
 }
