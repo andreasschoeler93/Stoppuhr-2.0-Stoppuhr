@@ -1,6 +1,6 @@
 # ----------------------------------------
 # Stoppuhr Webserver
-# Version: v0.37.0
+# Version: v0.38.0
 # Status: stable-beta
 # ----------------------------------------
 
@@ -43,7 +43,7 @@ import node_names
 from xml_writer import create_xml_heats
 
 
-APP_VERSION: Final[str] = "0.37.0"
+APP_VERSION: Final[str] = "0.38.0"
 DEFAULT_PORT: Final[int] = 1999  # Since JAuswertung expected this port
 EXIT_ERROR: Final[int] = 1
 STATE_KEY: Final[str] = "STATE"
@@ -1385,6 +1385,36 @@ def api_get_taster():
     return jsonify({"tasters": [_taster_with_vitals(t, st.get("vitals", {})) for t in st["tasters"]]})
 
 
+@app.post("/api/taster/sleep")
+def api_taster_sleep() -> ResponseReturnValue:
+    """Einen Taster ausschalten (Schlafmodus). Zur Sicherheit muss sein Buchstabe nochmal eingegeben werden."""
+    payload = request.get_json(force=True, silent=True) or {}
+    letter = str(payload.get("letter") or "").strip().upper()
+    confirm = str(payload.get("confirm") or "").strip().upper()
+    if not letter:
+        return jsonify({"ok": False, "error": "Kein Taster gewählt."}), 400
+    if confirm != letter:
+        return jsonify({"ok": False, "error": "Der Buchstabe zur Bestätigung stimmt nicht."}), 400
+    st = load_state()
+    taster = next((t for t in st["tasters"] if str(t.get("letter") or "").upper() == letter), None)
+    if taster is None:
+        return jsonify({"ok": False, "error": f"Taster {letter} ist nicht angemeldet."}), 404
+    mac = str(taster.get("mac"))
+    if _run_in_progress(st) and _taster_has_task(st, mac):
+        return jsonify({"ok": False, "error": f"Taster {letter} hat eine Aufgabe und ein Lauf läuft gerade."}), 409
+    try:
+        grace_s = max(1, int(st.get("settings", {}).get("shutdown_grace_s", "10")))
+    except (TypeError, ValueError):
+        grace_s = 10
+    now = now_ms()
+    sleeping = {m: u for m, u in (st.get("sleep_until") or {}).items() if int(u) > now}  # type: ignore[attr-defined]
+    sleeping[mac] = now + grace_s * 1000
+    st["sleep_until"] = sleeping  # type: ignore[typeddict-unknown-key]
+    save_state(st)
+    logger.info("Taster %s wird schlafen geschickt", letter)
+    return jsonify({"ok": True, "letter": letter, "grace_s": grace_s})
+
+
 @app.post("/api/taster")
 def api_post_taster():
     """Register einen Taster"""
@@ -2506,7 +2536,8 @@ def api_get_display():
 
     out: dict[str, Any] = {
         "role": "none",
-        "shutdown": now < int(st.get("shutdown_until_ms", 0) or 0),
+        "shutdown": now < int(st.get("shutdown_until_ms", 0) or 0)
+        or now < int((st.get("sleep_until") or {}).get(mac, 0) or 0),  # type: ignore[attr-defined]
         "low_battery_pct": _int_setting(st, "low_battery_pct", 10),
         "low_battery_min": _int_setting(st, "low_battery_min", 5),
         "lane": None,

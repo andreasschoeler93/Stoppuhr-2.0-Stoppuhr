@@ -1231,6 +1231,57 @@ function getSlotForButton(btnId) {
 
 function findButtonById(id) { return buttons.find(b => b.id === id) || null; }
 
+let sleepPick = null;
+
+function renderSleepButtons() {
+  const box = byId("sleepButtons");
+  if (!box) return;
+  const list = buttons.filter(b => b.letter && b.letter !== "?")
+    .sort((a, b) => a.letter.localeCompare(b.letter));
+  box.innerHTML = list.length
+    ? list.map(b => `<button class="btn btn-outline-secondary" type="button" data-sleep-letter="${escapeHtml(b.letter)}"${b.online ? "" : " disabled"}>Taster ${escapeHtml(b.letter)}</button>`).join("")
+    : '<span class="text-muted small">Noch kein Taster angemeldet.</span>';
+  if (sleepPick && !list.some(b => b.letter === sleepPick && b.online)) cancelSleep();
+}
+
+function cancelSleep() {
+  sleepPick = null;
+  byId("sleepConfirm").classList.add("d-none");
+  byId("sleepConfirmInput").value = "";
+  byId("btnSleepConfirm").disabled = true;
+}
+
+function initSleepControls() {
+  byId("sleepButtons").addEventListener("click", ev => {
+    const b = ev.target.closest("[data-sleep-letter]");
+    if (!b || b.disabled) return;
+    sleepPick = b.dataset.sleepLetter;
+    byId("sleepConfirmLetter").textContent = sleepPick;
+    byId("sleepConfirmInput").value = "";
+    byId("btnSleepConfirm").disabled = true;
+    byId("sleepConfirm").classList.remove("d-none");
+    byId("sleepStatus").textContent = "";
+    byId("sleepConfirmInput").focus();
+  });
+  byId("sleepConfirmInput").addEventListener("input", ev => {
+    byId("btnSleepConfirm").disabled = !sleepPick || ev.target.value.trim().toUpperCase() !== sleepPick.toUpperCase();
+  });
+  byId("btnSleepCancel").addEventListener("click", cancelSleep);
+  byId("btnSleepConfirm").addEventListener("click", async () => {
+    const letter = sleepPick, status = byId("sleepStatus");
+    if (!letter) return;
+    try {
+      await apiPost("/api/taster/sleep", { letter, confirm: byId("sleepConfirmInput").value });
+      status.className = "small text-success mt-2";
+      status.textContent = `Taster ${letter} wird ausgeschaltet.`;
+      cancelSleep();
+    } catch (e) {
+      status.className = "small text-danger mt-2";
+      status.textContent = `Taster ${letter}: ${e.message}`;
+    }
+  });
+}
+
 async function loadButtons() {
   const data = await apiGet("/api/mapping");
   const entries = [];
@@ -1260,6 +1311,7 @@ async function loadButtons() {
   }));
 
   resetAssignments();
+  renderSleepButtons();
 
   // initial assignment from backend fields (role/lane)
   buttons.forEach(btn => {
@@ -1955,6 +2007,8 @@ async function init() {
       byId("startcardsStatus").classList.add("text-danger");
     }
   });
+
+  initSleepControls();
 
   byId("manualWakeButtons").addEventListener("click", async event => {
     const button = event.target.closest("[data-wake-slot]");
