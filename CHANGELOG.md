@@ -5,6 +5,7 @@ Jede Version ist als Git-Tag `vX.Y.Z` markiert und kann in der Weboberfläche un
 
 | Version | Datum | Änderung |
 |---|---|---|
+| v0.41.0 | 2026-11-11 | Vitaldaten: Die Legende für die einzelnen Ladeplatz-Spannungen steht nun direkt über dem Spannungsverlauf, statt in der allgemeinen Legende am Seitenanfang. |
 | v0.40.0 | 2026-11-11 | Vitaldaten: Neues Diagramm „Spannungsverlauf je Ladeplatz“ unter dem Ladekoffer-Status. Zeigt die Akkuspannung der einzelnen Ladeplätze mit ein-/ausblendbaren Kurven; neue Messwerte werden auch im Wettkampf-Archiv gespeichert. |
 | v0.39.0 | 2026-11-11 | Einstellungen: Die Bestätigung zum einzelnen Schlafen-Schicken eines Tasters erscheint nun in einem Popup. Der Taster-Buchstabe muss dort erneut eingegeben werden. |
 | v0.38.0 | 2026-11-12 | Einstellungen: Neue Karte „Taster einzeln schlafen schicken“ unter dem Einzel-Wecken. Zur Sicherheit muss der Buchstabe des Tasters zur Bestätigung erneut eingegeben werden. Nur Taster, die online sind; Taster mit Aufgabe werden während eines Laufs abgelehnt. Der Taster bekommt `shutdown` für die Dauer „Ausschalt-Karenz“ (`shutdown_grace_s`). Neuer Endpoint `POST /api/taster/sleep`. |

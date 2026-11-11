@@ -528,7 +528,7 @@ function chargerStatusHtml() {
 
 function chargerVoltageChartHtml() {
   return chargerVoltageSeries.length
-    ? `<div class="mt-3"><strong class="small">Spannungsverlauf je Ladeplatz (V)</strong><canvas id="vc-charger-voltage" style="width:100%;height:180px"></canvas></div>`
+    ? `<div class="mt-3"><strong class="small">Spannungsverlauf je Ladeplatz (V)</strong><div id="chargerVoltageLegend" class="small mt-1"></div><canvas id="vc-charger-voltage" style="width:100%;height:180px"></canvas></div>`
     : "";
 }
 
@@ -546,8 +546,7 @@ function drawVitals() {
   }
   info.innerHTML = (s.length ? s.map(legend).join("") : "Noch kein Taster angemeldet.")
     + (vitalsData.piSeries.length ? ' <span class="text-muted me-2">|</span>' + vitalsData.piSeries.map(legend).join("") : "")
-    + (chargerSeries.length ? ' <span class="text-muted me-2">|</span>' + chargerSeries.map(legend).join("") : "")
-    + (chargerVoltageSeries.length ? ' <span class="text-muted me-2">|</span>' + chargerVoltageSeries.map(legend).join("") : "");
+    + (chargerSeries.length ? ' <span class="text-muted me-2">|</span>' + chargerSeries.map(legend).join("") : "");
   if (!box.children.length) {
     box.innerHTML = VITAL_CHARTS.concat(PI_CHARTS).map(c => `<div class="col-lg-6"><div class="card"><div class="card-body p-2">
       <strong class="small">${c.title} (${c.unit})</strong>
@@ -558,6 +557,17 @@ function drawVitals() {
   byId("vitalsStatus").innerHTML = vitalsData.archive
     ? '<span class="text-muted small">Archivierter Wettkampf – der aktuelle Zustand wird nicht angezeigt.</span>' + chargerVoltageChartHtml()
     : vitalsStatusHtml() + piStatusHtml() + chargerStatusHtml();
+  const voltageLegend = byId("chargerVoltageLegend");
+  if (voltageLegend) {
+    voltageLegend.innerHTML = chargerVoltageSeries.map(legend).join("");
+    if (!voltageLegend.dataset.bound) {
+      voltageLegend.dataset.bound = "1";
+      voltageLegend.addEventListener("click", e => {
+        const el = e.target.closest("[data-series]");
+        if (el) toggleSeries(el.dataset.series);
+      });
+    }
+  }
   if (chargerVoltageSeries.length) {
     drawVitalChart({ id: "charger-voltage", idx: 1, title: "Ladekoffer – Akkuspannung je Ladeplatz", unit: "V", decimals: 2 }, chargerVoltageSeries);
   }
