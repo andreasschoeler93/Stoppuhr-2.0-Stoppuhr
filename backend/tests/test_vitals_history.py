@@ -58,8 +58,17 @@ class VitalsHistoryTest(unittest.TestCase):
         r = FakeRedis()
         vitals_history.add_charger(r, 1000, {"temp": 24.5, "humidity": 40})
         vitals_history.add_charger(r, 2000, {"temp": None, "humidity": "x"})
-        self.assertEqual(vitals_history.history_charger(r, 1500), [[2000, None, None]])
+        self.assertEqual(vitals_history.history_charger(r, 1500), [[2000, None, None, None]])
         self.assertEqual(len(vitals_history.history_charger(r)), 2)
+
+    def test_charger_history_legacy_and_current(self):
+        r = FakeRedis()
+        r.rpush(vitals_history.CHARGER_KEY, '[1000,24.5,40]')
+        vitals_history.add_charger(r, 2000, {"temp": 25, "current_a": 0.42})
+        vitals_history.add_charger(r, 3000, {"current_a": None})
+        self.assertEqual(vitals_history.history_charger(r), [
+            [1000, 24.5, 40, None], [2000, 25.0, None, 0.42], [3000, None, None, None],
+        ])
 
     def test_charger_slot_voltage_history(self):
         r = FakeRedis()

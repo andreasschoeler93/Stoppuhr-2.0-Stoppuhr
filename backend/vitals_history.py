@@ -13,7 +13,7 @@ FIELDS: Final[tuple[str, ...]] = ("battery", "vbat", "temp", "humidity", "rssi")
 PI_PREFIX: Final[str] = "PI_HIST:"
 PI_FIELDS: Final[tuple[str, ...]] = ("cpu_temp", "cpu_percent", "mem_percent")
 CHARGER_KEY: Final[str] = "CHARGER_HIST"
-CHARGER_FIELDS: Final[tuple[str, ...]] = ("temp", "humidity")
+CHARGER_FIELDS: Final[tuple[str, ...]] = ("temp", "humidity", "current_a")
 CHARGER_MAX_POINTS: Final[int] = KEEP_HOURS * 720 + 120
 CHARGER_SLOTS_KEY: Final[str] = "CHARGER_SLOTS_HIST"
 CHARGER_SLOT_COUNT: Final[int] = 10
@@ -115,7 +115,7 @@ def history_pi(r: Any, name: str, since_ms: int = 0) -> list[list[Any]]:
 
 
 def add_charger(r: Any, ts_ms: int, status: dict[str, Any]) -> None:
-    """Messpunkt der Ladekoffer-Sensoren (Temperatur und Luftfeuchte)."""
+    """Messpunkt der Ladekoffer-Sensoren (Temperatur, Luftfeuchte, Strom)."""
     try:
         point = [ts_ms] + [_num(status.get(f)) for f in CHARGER_FIELDS]
         pipe = r.pipeline()
@@ -137,8 +137,8 @@ def history_charger(r: Any, since_ms: int = 0) -> list[list[Any]]:
             point = json.loads(item)
         except ValueError:
             continue
-        if isinstance(point, list) and len(point) == len(CHARGER_FIELDS) + 1 and point[0] >= since_ms:
-            points.append(point)
+        if isinstance(point, list) and len(point) in (3, 4) and point[0] >= since_ms:
+            points.append(point + [None] if len(point) == 3 else point)
     return points
 
 

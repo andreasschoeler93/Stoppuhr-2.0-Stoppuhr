@@ -62,6 +62,10 @@ def sanitize(payload: Any) -> Optional[dict[str, Any]]:
         "rssi": _int(payload.get("rssi"), -150, 0),
         "temp": _num(payload.get("temp"), -50, 150),
         "humidity": _num(payload.get("humidity"), 0, 100),
+        "current_a": _num(payload.get("current_a"), -0.8192, 0.8192)
+        if payload.get("current_ok") is True and payload.get("current_saturated") is False else None,
+        "current_ok": payload.get("current_ok") if isinstance(payload.get("current_ok"), bool) else None,
+        "current_saturated": payload.get("current_saturated") is True,
         "aht_ok": payload.get("aht_ok") is True,
         "temp_alarm": payload.get("temp_alarm") is True,
         "i2c_ok": payload.get("i2c_ok") is True,
@@ -132,6 +136,12 @@ def evaluate(status: Optional[dict[str, Any]], now_ms: int) -> dict[str, Any]:
         state = "offline"
         messages.append({"level": "warn", "text": f"Ladekoffer meldet sich nicht (zuletzt vor {_age_text(age)})."})
     else:
+        if status.get("current_saturated"):
+            messages.append({"level": "error", "text": "Stromsensor am Messbereichsende: Strom nicht messbar. 8,5/9,5 A werden nicht überwacht!"})
+        elif status.get("current_ok") is False:
+            messages.append({"level": "warn", "text": "Stromsensor nicht erreichbar oder keine frische Messung: Strom wird nicht überwacht."})
+        elif status.get("current_ok") is True and status.get("current_a") is None:
+            messages.append({"level": "warn", "text": "Stromsensor liefert keinen gültigen Messwert."})
         if status.get("temp_alarm"):
             temp = status.get("temp")
             extra = f" ({_comma(temp)} °C)" if temp is not None else ""

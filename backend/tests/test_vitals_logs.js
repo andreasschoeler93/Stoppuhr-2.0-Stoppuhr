@@ -90,3 +90,46 @@ test("Taster cards do not contain a log download link", () => {
   assert.equal(cards.length, 1);
   assert.doesNotMatch(cards[0].innerHTML, /device-logs|Logs herunterladen/);
 });
+
+test("Ladekoffer current is shown only when valid and online", () => {
+  const { context } = loadApp();
+  vm.runInContext(`chargerData = {
+    known: true, online: true, state: "ruhig", messages: [],
+    status: { slots: [], current_ok: true, current_saturated: false, current_a: 0.42 }
+  };`, context);
+  assert.match(vm.runInContext("chargerStatusHtml()", context), /Gesamtstrom: <strong>0\.420 A/);
+  vm.runInContext("chargerData.status.current_saturated = true", context);
+  assert.match(vm.runInContext("chargerStatusHtml()", context), /Messbereichsende – Strom unbekannt/);
+  vm.runInContext("chargerData.online = false", context);
+  assert.match(vm.runInContext("chargerStatusHtml()", context), /nicht verfügbar \(Ladekoffer offline\)/);
+  vm.runInContext("chargerData.online = true; chargerData.status.current_ok = false; chargerData.status.current_saturated = false", context);
+  assert.match(vm.runInContext("chargerStatusHtml()", context), /Gesamtstrom: <strong>nicht verfügbar/);
+});
+
+test("Current chart does not bridge an invalid measurement", () => {
+  const { context, elements } = loadApp();
+  const strokes = [];
+  const g = {
+    scale() {}, clearRect() {}, fillText() {}, beginPath() {}, stroke() {},
+    save() {}, restore() {}, setLineDash() {},
+    moveTo(x, y) { strokes.push(["move", x, y]); },
+    lineTo(x, y) { strokes.push(["line", x, y]); },
+  };
+  elements["vc-charger-current"] = { clientWidth: 400, clientHeight: 180, getContext: () => g };
+  context.window = { devicePixelRatio: 1 };
+  vm.runInContext(`vitalsData = { t1: 10000, hours: 1, starts: [] };
+    drawVitalChart({ id: "charger-current", idx: 1, decimals: 2 },
+      [{ label: "Strom", color: "red", points: [[1000, 0.1], [2000, null], [3000, 0.2]] }]);`, context);
+  assert.deepEqual(strokes.slice(-2).map(s => s[0]), ["move", "move"]);
+});
+
+test("Archived charger history accepts old points and preserves current gaps", () => {
+  const { context } = loadApp();
+  vm.runInContext(`buildArchiveVitals({
+    id: "archive", ended_ts: 5000,
+    charger: [[1000, 20, 40], [2000, 20, 40, 0.3], [3000, 20, 40, null]]
+  });`, context);
+  assert.equal(vm.runInContext("chargerCurrentSeries[0].points[0][1]", context), null);
+  assert.equal(vm.runInContext("chargerCurrentSeries[0].points[1][1]", context), 0.3);
+  assert.equal(vm.runInContext("chargerCurrentSeries[0].points[2][1]", context), null);
+});

@@ -71,6 +71,18 @@ class SanitizeTests(unittest.TestCase):
         self.assertEqual([x["n"] for x in s["slots"]], [3])
         self.assertIsNone(s["slots"][0]["vbat"])
 
+    def test_current_requires_valid_sensor_and_unsaturated_value(self):
+        s = ladekoffer.sanitize(payload(current_a=0.42, current_ok=True, current_saturated=False))
+        self.assertEqual(s["current_a"], 0.42)
+        for update in (
+            {"current_a": 0.42, "current_ok": False, "current_saturated": False},
+            {"current_a": 0.42, "current_ok": True, "current_saturated": True},
+            {"current_a": 1.0, "current_ok": True, "current_saturated": False},
+            {"current_a": 0.42, "current_ok": True},
+        ):
+            self.assertIsNone(ladekoffer.sanitize(payload(**update))["current_a"])
+        self.assertIsNone(ladekoffer.sanitize(payload())["current_ok"])
+
 
 class EvaluateTests(unittest.TestCase):
     NOW = 1_000_000
@@ -87,6 +99,15 @@ class EvaluateTests(unittest.TestCase):
         e = ladekoffer.evaluate(self._status(), self.NOW + 1000)
         self.assertEqual(e["state"], "ruhig")
         self.assertEqual(e["messages"], [])
+
+    def test_current_sensor_failures_are_reported(self):
+        saturated = self._status(current_ok=True, current_saturated=True, current_a=0.819)
+        e = ladekoffer.evaluate(saturated, self.NOW)
+        self.assertEqual(e["state"], "fehler")
+        self.assertIsNone(e["status"]["current_a"])
+        self.assertIn("Strom nicht messbar", e["messages"][0]["text"])
+        missing = ladekoffer.evaluate(self._status(current_ok=False, current_saturated=False), self.NOW)
+        self.assertIn("nicht erreichbar", missing["messages"][0]["text"])
 
     def test_charging(self):
         slots = [slot(n) for n in range(1, 11)]
@@ -156,12 +177,24 @@ class EndpointTests(unittest.TestCase):
         self.assertLess(abs(body["status"]["ts"] - int(time.time() * 1000)), 5000)
         self.assertEqual(
             vitals_history.history_charger(self.redis),
-            [[body["status"]["ts"], 24.5, 40.0]],
+            [[body["status"]["ts"], 24.5, 40.0, None]],
         )
         history = vitals_history.history_charger_slots(self.redis)
         self.assertEqual(len(history), 2)
         self.assertEqual(history[0][1:], [3.8] * 10)
         self.assertAlmostEqual(body["status"]["ts"] - history[0][0], 5000, delta=1000)
+
+    def test_current_roundtrip_and_overrange(self):
+        stopwatch.app.config["AUTH_DISABLED"] = True
+        self.client.post("/api/charger", json=payload(current_a=0.25, current_ok=True, current_saturated=False))
+        status = self.client.get("/api/charger").get_json()["status"]
+        self.assertEqual(status["current_a"], 0.25)
+        self.assertEqual(vitals_history.history_charger(self.redis)[-1][-1], 0.25)
+        self.client.post("/api/charger", json=payload(current_a=0.819, current_ok=True, current_saturated=True))
+        body = self.client.get("/api/charger").get_json()
+        self.assertIsNone(body["status"]["current_a"])
+        self.assertIn("Strom nicht messbar", body["messages"][0]["text"])
+        self.assertIsNone(vitals_history.history_charger(self.redis)[-1][-1])
 
     def test_long_press_sleeps_only_tasters_without_a_role(self):
         stopwatch.app.config["AUTH_DISABLED"] = True

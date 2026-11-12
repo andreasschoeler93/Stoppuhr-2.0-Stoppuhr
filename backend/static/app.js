@@ -42,6 +42,7 @@ const PI_COLORS = { "Koffer-Pi": "#0d6efd", "Bad-Pi": "#fd7e14", "Pi": "#0d6efd"
 let vitalsData = null;
 let chargerSeries = [];
 let chargerVoltageSeries = [];
+let chargerCurrentSeries = [];
 // Per Klick auf die Legende ausgeblendete Kurven (nach Name), bleibt im Browser gespeichert
 const hiddenSeries = new Set(JSON.parse(localStorage.getItem("vitalsHidden") || "[]"));
 function toggleSeries(label) {
@@ -92,6 +93,8 @@ function buildArchiveVitals(a) {
   chargerSeries = a.charger?.length
     ? [{ label: "Ladekoffer", color: "#20a4a8", points: a.charger.map(([ts, temp, humidity]) => [ts, null, null, temp, humidity, null]) }]
     : [];
+  chargerCurrentSeries = (a.charger || []).some(p => p[3] !== null && p[3] !== undefined)
+    ? [{ label: "Ladekoffer Strom", color: "#20a4a8", points: a.charger.map(p => [p[0], p[3] ?? null]) }] : [];
   chargerVoltageSeries = (a.charger_slots || []).length
     ? Array.from({ length: 10 }, (_, i) => ({
       label: `Ladeplatz ${i + 1}`,
@@ -142,6 +145,8 @@ async function refreshVitals() {
   chargerSeries = pi.charger?.length
     ? [{ label: "Ladekoffer", color: "#20a4a8", points: pi.charger.map(([ts, temp, humidity]) => [ts, null, null, temp, humidity, null]) }]
     : [];
+  chargerCurrentSeries = (pi.charger || []).some(p => p[3] !== null && p[3] !== undefined)
+    ? [{ label: "Ladekoffer Strom", color: "#20a4a8", points: pi.charger.map(p => [p[0], p[3] ?? null]) }] : [];
   chargerVoltageSeries = (pi.charger_slots || []).length
     ? Array.from({ length: 10 }, (_, i) => ({
       label: `Ladeplatz ${i + 1}`,
@@ -551,11 +556,21 @@ function chargerStatusHtml() {
   const lim = LIMITS.charger;
   const colored = (v, dec, unit, rule) => levelHtml(num(v, dec, unit), limitLevel(v, rule));
   const info = `Temperatur ${colored(s.temp, 1, "°C", lim.temp)} · Luftfeuchte ${colored(s.humidity, 0, "%", lim.humidity)} · WLAN ${colored(s.rssi, 0, "dBm", lim.rssi)} · Firmware ${escapeHtml(s.fw || "–")}`;
+  const current = !chargerData.online ? "nicht verfügbar (Ladekoffer offline)"
+    : s.current_saturated ? "Messbereichsende – Strom unbekannt"
+    : s.current_ok === true && s.current_a !== null ? num(s.current_a, 3, "A") : "nicht verfügbar";
   return `<div class="mt-3"><strong class="small">Ladekoffer</strong> <span class="badge ${cls}">${label.replace("Ladekoffer: ", "")}</span>
     <div class="table-responsive mt-1"><table class="table table-sm align-middle mb-0"><thead><tr><th>Platz</th>${head}</tr></thead><tbody>${body}</tbody></table></div>
     <div class="small text-muted mt-1">${info}</div>
+    <div class="small mt-1">Gesamtstrom: <strong>${current}</strong> · R100: Messbereich etwa ±0,82 A. Keine Überstromabschaltung oder Überwachung von 8,5/9,5 A.</div>
     <a class="btn btn-sm btn-outline-secondary mt-2" href="/api/device-logs/charger" download>Logs herunterladen</a>
-    ${msgs}${chargerVoltageChartHtml()}</div>`;
+    ${msgs}${chargerVoltageChartHtml()}${chargerCurrentChartHtml()}</div>`;
+}
+
+function chargerCurrentChartHtml() {
+  return chargerCurrentSeries.length
+    ? '<div class="mt-3"><strong class="small">Gesamtstrom Ladekoffer (A)</strong><canvas id="vc-charger-current" style="width:100%;height:180px"></canvas></div>'
+    : "";
 }
 
 function chargerVoltageChartHtml() {
@@ -587,7 +602,7 @@ function drawVitals() {
       <strong class="small">Zustand der Taster und Pis</strong><div id="vitalsStatus" class="mt-1"></div></div></div></div>`;
   }
   byId("vitalsStatus").innerHTML = vitalsData.archive
-    ? '<span class="text-muted small">Archivierter Wettkampf – der aktuelle Zustand wird nicht angezeigt.</span>' + chargerVoltageChartHtml()
+    ? '<span class="text-muted small">Archivierter Wettkampf – der aktuelle Zustand wird nicht angezeigt.</span>' + chargerVoltageChartHtml() + chargerCurrentChartHtml()
     : vitalsStatusHtml() + piStatusHtml() + chargerStatusHtml();
   const voltageLegend = byId("chargerVoltageLegend");
   if (voltageLegend) {
@@ -602,6 +617,9 @@ function drawVitals() {
   }
   if (chargerVoltageSeries.length) {
     drawVitalChart({ id: "charger-voltage", idx: 1, title: "Ladekoffer – Akkuspannung je Ladeplatz", unit: "V", decimals: 2 }, chargerVoltageSeries);
+  }
+  if (chargerCurrentSeries.length) {
+    drawVitalChart({ id: "charger-current", idx: 1, title: "Ladekoffer – Gesamtstrom", unit: "A", decimals: 2 }, chargerCurrentSeries);
   }
   VITAL_CHARTS.forEach(c => drawVitalChart(c, s));
   PI_CHARTS.forEach(c => drawVitalChart(c, vitalsData.piSeries));
@@ -621,9 +639,9 @@ function drawVitalChart(c, series) {
   const shown = list => list.filter(s => !hiddenSeries.has(s.label));
   const lines = cols.flatMap(([ci, dash]) => shown(ci === 3 || ci === 4 ? series.concat(chargerSeries) : series).map(s => ({
     dash, color: s.color,
-    data: s.points.filter(p => p[ci] !== null && p[0] >= t0 && p[0] <= t1).map(p => [p[0], p[ci]]),
+    data: s.points.filter(p => (c.id === "charger-current" || p[ci] !== null) && p[0] >= t0 && p[0] <= t1).map(p => [p[0], p[ci] ?? null]),
   })));
-  const all = lines.flatMap(l => l.data.map(d => d[1]));
+  const all = lines.flatMap(l => l.data.map(d => d[1]).filter(v => v !== null));
   if (!all.length) { g.fillStyle = "#888"; g.font = "12px sans-serif"; g.fillText("keine Daten", 10, 20); return; }
   const dec = c.decimals ?? 0;
   let lo = c.min ?? Math.min(...all);
@@ -673,6 +691,7 @@ function drawVitalChart(c, series) {
     g.strokeStyle = l.color; g.setLineDash(l.dash ? [5, 3] : []); g.beginPath();
     let prev = null;
     l.data.forEach(([t, v]) => {
+      if (v === null) { prev = null; return; }
       // Luecke ueber 2 Minuten (Taster aus): Linie unterbrechen
       if (prev === null || t - prev > 120000) g.moveTo(x(t), y(v)); else g.lineTo(x(t), y(v));
       prev = t;
