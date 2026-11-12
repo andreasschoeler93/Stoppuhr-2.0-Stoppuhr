@@ -1,6 +1,6 @@
 # ----------------------------------------
 # Stoppuhr Webserver
-# Version: v0.41.10
+# Version: v0.41.11
 # Status: stable-beta
 # ----------------------------------------
 
@@ -44,7 +44,7 @@ import node_names
 from xml_writer import create_xml_heats
 
 
-APP_VERSION: Final[str] = "0.41.10"
+APP_VERSION: Final[str] = "0.41.11"
 DEFAULT_PORT: Final[int] = 1999  # Since JAuswertung expected this port
 EXIT_ERROR: Final[int] = 1
 STATE_KEY: Final[str] = "STATE"
@@ -155,6 +155,7 @@ class State(TypedDict):
     current_attempt: int
     aborted_attempts: list[str]
     abort_requests: dict[str, Any]
+    starter_trigger_receipts: dict[str, Any]
     results: dict[int, Any]
     assignments: dict[str, Any]
     # Due to serialization, store run number always as string
@@ -198,6 +199,7 @@ def _default_state() -> State:
         "current_attempt": 1,
         "aborted_attempts": [],
         "abort_requests": {},
+        "starter_trigger_receipts": {},
         "charger_manual_wake": None,
         "charger_manual_wake_results": [],
     }
@@ -401,6 +403,7 @@ _OPEN_ROUTES: Final[frozenset[tuple[str, str]]] = frozenset({
     ("POST", "/api/triggers"),
     ("GET", "/api/display"),
     ("POST", "/api/abort-run"),
+    ("POST", "/api/abort-press"),
     ("GET", "/api/firmware/download"),
     ("POST", "/api/ota-status"),
     ("GET", "/heats.xml"),
@@ -752,6 +755,7 @@ def api_end_competition() -> ResponseReturnValue:
     st["start_locked_until_ms"] = 0
     st["aborted_attempts"] = []
     st["abort_requests"] = {}
+    st["starter_trigger_receipts"] = {}
     st["run_finished_ts"] = None
     save_state(st)
     _write_heats_xml(st)
@@ -2682,7 +2686,27 @@ def _handle_trigger(st: State, payload: dict[str, Any], replay: bool = False):
 def api_post_triggers():
     st = load_state()
     payload = request.get_json(force=True, silent=True) or {}
-    return _handle_trigger(st, payload)
+    mac = payload.get("mac")
+    trigger_id = payload.get("trigger_id")
+    if isinstance(mac, str) and isinstance(trigger_id, str) and 0 < len(trigger_id) <= 64:
+        receipts = st.setdefault("starter_trigger_receipts", {})
+        existing = receipts.get(mac)
+        if existing and existing.get("trigger_id") == trigger_id:
+            return jsonify(existing["response"])
+    result = app.make_response(_handle_trigger(st, payload))
+    data = result.get_json(silent=True)
+    if (result.status_code == 200 and isinstance(data, dict)
+            and isinstance(mac, str) and isinstance(trigger_id, str) and 0 < len(trigger_id) <= 64
+            and _lane_for_mac(st, mac) == STARTER_KEY):
+        run_key = (data.get("press") or {}).get("run_key") or data.get("run_key")
+        if not run_key and data.get("reason") == "double_press_too_fast":
+            run_key = _attempt_key(int(st["current_run"]), int(st.get("current_attempt") or 1))
+        if run_key:
+            st.setdefault("starter_trigger_receipts", {})[mac] = {
+                "trigger_id": trigger_id, "run_key": run_key, "response": data,
+            }
+            save_state(st)
+    return result
 
 
 def _display_text(text: Any, limit: int = 30) -> str:
@@ -2990,6 +3014,43 @@ def api_post_abort_run():
     )
 
 
+@app.post("/api/abort-press")
+def api_post_abort_press():
+    """Bricht nur den Versuch ab, zu dem der zugehoerige Starterdruck verarbeitet wurde."""
+    st = load_state()
+    payload = request.get_json(force=True, silent=True) or {}
+    mac = payload.get("mac")
+    trigger_id = payload.get("trigger_id")
+    if not isinstance(mac, str) or not isinstance(trigger_id, str) or not 0 < len(trigger_id) <= 64:
+        return jsonify({"ok": False, "error": "missing mac or trigger_id"}), 400
+    if _lane_for_mac(st, mac) != STARTER_KEY:
+        return jsonify({"ok": False, "error": "abort is only available on the starter"}), 403
+    requests = st.setdefault("abort_requests", {})
+    request_id = "press:" + trigger_id
+    previous = requests.get(mac)
+    if previous and previous.get("request_id") == request_id:
+        return jsonify({"ok": True, "current_run": previous["run"],
+                        "current_attempt": previous["attempt"], "current_key": previous["key"]})
+    receipt = (st.get("starter_trigger_receipts") or {}).get(mac)
+    if not receipt or receipt.get("trigger_id") != trigger_id:
+        return jsonify({"ok": False, "error": "starter press not found"}), 409
+    run = int(st.get("current_run") or 0)
+    current_key = _attempt_key(run, int(st.get("current_attempt") or 1))
+    if receipt.get("run_key") != current_key or not (
+        (st.get("triggers_per_run") or {}).get(current_key) or {}
+    ).get(STARTER_KEY):
+        return jsonify({"ok": False, "error": "run has changed"}), 409
+    aborted = set(st.get("aborted_attempts") or [])
+    aborted.add(current_key)
+    st["aborted_attempts"] = sorted(aborted)
+    attempt = _prepare_attempt(st, run)
+    key = _attempt_key(run, attempt)
+    requests[mac] = {"request_id": request_id, "run": run, "attempt": attempt, "key": key}
+    save_state(st)
+    _write_heats_xml(st)
+    return jsonify({"ok": True, "current_run": run, "current_attempt": attempt, "current_key": key})
+
+
 @app.post("/api/test/reset-run")
 def api_test_reset_run():
     """Nur zum Testen: Messung des aktuellen Laufs verwerfen."""
@@ -3045,6 +3106,8 @@ def _heats_for_xml(st: State) -> list[tuple[int, int, dict[int, int]]]:
         heats.append((run, attempt, lane_times))
     # Uebernommene Zieleinlauf-Zeiten: je Uebertragung eine eigene Unterversion des Laufs
     for run_key in (st.get("finish_adopted") or {}):
+        if run_key in (st.get("aborted_attempts") or []):
+            continue
         parsed = _parse_attempt_key(run_key)
         if parsed is None or parsed[0] not in event_of:
             continue

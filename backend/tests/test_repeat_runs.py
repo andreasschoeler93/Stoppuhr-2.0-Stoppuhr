@@ -9,6 +9,9 @@ class RepeatRunTests(unittest.TestCase):
     def setUp(self):
         self.state = stopwatch._default_state()
         stopwatch.app.config["AUTH_DISABLED"] = True
+        old_secret = stopwatch.app.secret_key
+        stopwatch.app.secret_key = "test-secret"
+        self.addCleanup(setattr, stopwatch.app, "secret_key", old_secret)
         self.client = stopwatch.app.test_client()
         self.load_state = patch.object(
             stopwatch, "load_state", side_effect=lambda: copy.deepcopy(self.state)
@@ -67,6 +70,69 @@ class RepeatRunTests(unittest.TestCase):
         )
         self.assertIn("5", self.state["triggers_per_run"])
         self.assertIn("5", self.state["aborted_attempts"])
+
+    def test_press_abort_targets_immediate_starter_stop(self):
+        self.state["current_run"] = 5
+        self.state["startcards_per_run"] = {"5": [{"Bahn": "1"}]}
+        self.state["assignments"]["mapping"] = {"starter": "AA:BB", "1": "lane"}
+        self.state["triggers_per_run"] = {"5": {"starter": {"ts": 1000, "mac": "AA:BB"}}}
+        with patch.object(stopwatch, "_write_heats_xml"):
+            stop = self.client.post("/api/triggers", json={"mac": "AA:BB", "ts": 10_000, "trigger_id": "boot:123"})
+            self.assertTrue(stop.json["stopped"])
+            aborted = self.client.post("/api/abort-press", json={"mac": "AA:BB", "trigger_id": "boot:123"})
+            retry = self.client.post("/api/abort-press", json={"mac": "AA:BB", "trigger_id": "boot:123"})
+        self.assertEqual(aborted.status_code, 200)
+        self.assertEqual(aborted.json["current_key"], "5/2")
+        self.assertEqual(retry.json["current_key"], "5/2")
+        self.assertIn("5", self.state["aborted_attempts"])
+
+    def test_press_abort_refuses_changed_run_or_unknown_press(self):
+        self.state["current_run"] = 5
+        self.state["startcards_per_run"] = {"5": [{"Bahn": "1"}], "6": [{"Bahn": "1"}]}
+        self.state["assignments"]["mapping"] = {"starter": "AA:BB", "1": "lane"}
+        with patch.object(stopwatch, "_write_heats_xml"):
+            self.client.post("/api/triggers", json={"mac": "AA:BB", "ts": 10_000, "trigger_id": "boot:123"})
+            self.state["current_run"] = 6
+            self.state["triggers_per_run"]["6"] = {"starter": {"ts": 20_000, "mac": "AA:BB"}}
+            response = self.client.post("/api/abort-press", json={"mac": "AA:BB", "trigger_id": "boot:123"})
+            unknown = self.client.post("/api/abort-press", json={"mac": "AA:BB", "trigger_id": "unknown"})
+        self.assertEqual(response.status_code, 409)
+        self.assertEqual(unknown.status_code, 409)
+        self.assertEqual(self.state["current_run"], 6)
+        self.assertNotIn("5", self.state["aborted_attempts"])
+
+    def test_press_abort_after_immediate_start_and_duplicate_delivery(self):
+        self.state["current_run"] = 5
+        self.state["startcards_per_run"] = {"5": [{"Bahn": "1"}]}
+        self.state["assignments"]["mapping"] = {"starter": "AA:BB", "1": "lane"}
+        press = {"mac": "AA:BB", "ts": 10_000, "trigger_id": "boot:123"}
+        with patch.object(stopwatch, "_write_heats_xml"):
+            first = self.client.post("/api/triggers", json=press)
+            retry = self.client.post("/api/triggers", json=press)
+            abort = self.client.post("/api/abort-press", json={"mac": "AA:BB", "trigger_id": "boot:123"})
+        self.assertEqual(first.json, retry.json)
+        self.assertIsNone(self.state["run_finished_ts"])
+        self.assertEqual(abort.json["current_key"], "5/2")
+        self.assertIn("5", self.state["aborted_attempts"])
+
+    def test_combo_finish_press_aborts_same_attempt(self):
+        self.state["current_run"] = 5
+        self.state["startcards_per_run"] = {"5": [{"Bahn": "1"}]}
+        self.state["settings"]["starter_is_finish"] = "1"
+        self.state["assignments"]["mapping"] = {"starter": "AA:BB", "1": "lane"}
+        self.state["triggers_per_run"] = {"5": {"starter": {"ts": 1000, "mac": "AA:BB"}}}
+        with patch.object(stopwatch, "_write_heats_xml"):
+            finish = self.client.post("/api/triggers", json={"mac": "AA:BB", "ts": 10_000, "trigger_id": "boot:123"})
+            abort = self.client.post("/api/abort-press", json={"mac": "AA:BB", "trigger_id": "boot:123"})
+        self.assertTrue(finish.json["finish"])
+        self.assertEqual(abort.status_code, 200)
+        self.assertIn("5", self.state["aborted_attempts"])
+
+    def test_aborted_attempt_does_not_export_adopted_finish_times(self):
+        self.state["startcards_per_run"] = {"5": [{"Bahn": "1", "Wettkampf": "3"}]}
+        self.state["finish_adopted"] = {"5": [{"attempt": 2, "lanes": {"1": 5000}}]}
+        self.state["aborted_attempts"] = ["5"]
+        self.assertEqual(stopwatch._heats_for_xml(self.state), [])
 
     def test_start_is_rejected_until_abort_lockout_expires(self):
         self.state["current_run"] = 5
