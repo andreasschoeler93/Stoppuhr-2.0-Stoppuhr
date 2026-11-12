@@ -5,6 +5,7 @@ Jede Version ist als Git-Tag `vX.Y.Z` markiert und kann in der Weboberfläche un
 
 | Version | Datum | Änderung |
 |---|---|---|
+| v0.41.12 | 2026-11-12 | Vorzeitige Bahndrücke mit leerem Zeit-Eintrag zählen nicht mehr als abgeschlossene Bahnen; der Lauf bleibt bis zu gültigen Stopps aktiv. |
 | v0.41.11 | 2026-11-12 | Starter-Abbruch: Ein direkt gesendeter Starterdruck kann anschließend gezielt abgebrochen werden; veraltete Anfragen werden abgelehnt und Wiederholungen erkannt (Taster ab v0.19.2). |
 | v0.41.10 | 2026-11-12 | Vitaldaten: Gesamtstrom und Verlauf vom INA226 mit R100-Shunt (Koffer ab v0.7.25), einschließlich Anzeige ungültiger Messungen. Die Messung ersetzt keinen Überstromschutz; 8,5/9,5 A liegen außerhalb des Messbereichs. |
 | v0.41.9 | 2026-11-12 | Taster-Logs: geschätzte lokale Ereigniszeiten sowie vom Pi beobachtete Rollen- und Grenzwertwechsel, ohne zusätzliche Übertragung durch die Taster. Einstellungen: „Alle starten“ führt die konfigurierte Koffer-Wecksequenz aus (Koffer ab v0.7.24). |

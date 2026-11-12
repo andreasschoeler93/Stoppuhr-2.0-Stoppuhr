@@ -16,6 +16,8 @@ class StartDeviationTests(unittest.TestCase):
         for target, kwargs in (
             ("load_state", {"side_effect": lambda: copy.deepcopy(self.state)}),
             ("save_state", {"side_effect": lambda s: self.state.update(copy.deepcopy(s))}),
+            ("_write_heats_xml", {}),
+            ("_load_ota", {"return_value": None}),
         ):
             p = patch.object(stopwatch, target, **kwargs)
             p.start()
@@ -47,6 +49,9 @@ class StartDeviationTests(unittest.TestCase):
         self.assertEqual(r.json["reason"], "stop_lockout")
         self.assertEqual(self.deviation(), {"2": 120})
         self.assertIsNone(self.state["triggers_per_run"]["5"].get("2"))
+        for mac in ("AA", "L1", "L2"):
+            self.assertEqual(self.client.get("/api/display", query_string={"mac": mac}).json["state"], "running")
+        self.assertEqual(self.client.get("/api/run-status").json["runs"]["5"]["times_ms"], {})
 
     def test_old_press_outside_window_is_ignored(self):
         self.press("L1", 1_000)
@@ -58,6 +63,40 @@ class StartDeviationTests(unittest.TestCase):
         self.press("AA", 10_000)
         status = self.client.get("/api/run-status").json
         self.assertEqual(status["runs"]["5"]["start_deviation"], {"1": -50})
+
+    def test_prestart_presses_do_not_end_run_or_stop_displays(self):
+        self.press("L1", 9900)
+        self.press("L2", 9950)
+        self.press("AA", 10000)
+        self.assertIsNone(self.state.get("run_finished_ts"))
+        self.assertEqual(self.deviation(), {"1": -100, "2": -50})
+        status = self.client.get("/api/run-status").json["runs"]["5"]
+        self.assertTrue(status["running"])
+        self.assertEqual(status["times_ms"], {})
+        for mac in ("AA", "L1", "L2"):
+            self.assertEqual(self.client.get("/api/display", query_string={"mac": mac}).json["state"], "running")
+        self.press("L1", 16000)
+        self.assertIsNone(self.state.get("run_finished_ts"))
+        self.assertEqual(self.client.get("/api/display", query_string={"mac": "L2"}).json["state"], "running")
+        self.press("L2", 17000)
+        self.assertIsNotNone(self.state.get("run_finished_ts"))
+
+    def test_existing_empty_lane_slot_does_not_finish_on_start(self):
+        self.state["startcards_per_run"]["5"] = [{"Bahn": "1"}]
+        self.state["triggers_per_run"] = {"5": {"1": None}}
+        self.press("L1", 9900)
+        self.press("AA", 10000)
+        self.assertIsNone(self.state.get("run_finished_ts"))
+        self.assertEqual(self.deviation(), {"1": -100})
+        for mac in ("AA", "L1"):
+            self.assertEqual(self.client.get("/api/display", query_string={"mac": mac}).json["state"], "running")
+
+    def test_prestart_replayed_with_zero_lockout_is_not_a_stop(self):
+        self.state["settings"]["stop_lockout_s"] = "0"
+        self.press("L1", 9900)
+        self.press("AA", 10000)
+        self.assertIsNone(self.state["triggers_per_run"]["5"].get("1"))
+        self.assertIsNone(self.state.get("run_finished_ts"))
 
 
 if __name__ == "__main__":

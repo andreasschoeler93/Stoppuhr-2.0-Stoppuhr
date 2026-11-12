@@ -1,6 +1,6 @@
 # ----------------------------------------
 # Stoppuhr Webserver
-# Version: v0.41.11
+# Version: v0.41.12
 # Status: stable-beta
 # ----------------------------------------
 
@@ -44,7 +44,7 @@ import node_names
 from xml_writer import create_xml_heats
 
 
-APP_VERSION: Final[str] = "0.41.11"
+APP_VERSION: Final[str] = "0.41.12"
 DEFAULT_PORT: Final[int] = 1999  # Since JAuswertung expected this port
 EXIT_ERROR: Final[int] = 1
 STATE_KEY: Final[str] = "STATE"
@@ -2659,7 +2659,7 @@ def _handle_trigger(st: State, payload: dict[str, Any], replay: bool = False):
     # Check, if for all lanes presses have been received (Bahnen ohne Taster werden nicht erwartet)
     mapping = (st.get("assignments") or {}).get("mapping") or {}
     expected = [l for l in lanes_in_run if mapping.get(l)] or lanes_in_run
-    if expected and not (set(expected) - set(triggers_per_run[current_key].keys())):
+    if expected and all(triggers_per_run[current_key].get(lane) for lane in expected):
         logger.info(f"All lanes have been pressed in run {current_key}")
         _write_heats_xml(st)
         # Nach der eingestellten Wartezeit in den naechsten Lauf wechseln
