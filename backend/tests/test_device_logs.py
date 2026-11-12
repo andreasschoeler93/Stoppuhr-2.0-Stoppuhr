@@ -16,7 +16,9 @@ class FakeRedis:
     def get(self, key):
         return self.data.get(key)
 
-    def set(self, key, value, ex=None):
+    def set(self, key, value, ex=None, nx=False):
+        if nx and key in self.data:
+            return False
         self.data[key] = value
         return True
 
@@ -118,6 +120,7 @@ class DeviceLogTests(unittest.TestCase):
         html = response.get_data(as_text=True)
         self.assertIn('href="/api/device-logs/pi"', html)
         self.assertIn('href="/api/device-logs/charger"', html)
+        self.assertIn(f'/static/app.js?v={stopwatch.APP_VERSION}', html)
 
 
 if __name__ == "__main__":

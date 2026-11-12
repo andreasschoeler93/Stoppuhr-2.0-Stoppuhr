@@ -347,6 +347,9 @@ function vitalsStatusHtml() {
     ["Temperatur", t => num(t.temp, 1, "°C", LIMITS.taster.temp)],
     ["Luftfeuchte", t => num(t.humidity, 0, "%", LIMITS.taster.humidity)],
     ["WLAN", t => num(t.rssi, 0, "dBm", LIMITS.taster.rssi)],
+    ["Logs", t => t.mac
+      ? `<a href="/api/device-logs/taster/${encodeURIComponent(t.mac)}" download aria-label="Logs für Taster ${escapeHtml(t.letter || t.mac)} herunterladen">Download</a>`
+      : "–"],
   ];
   if (!list.length) return '<span class="text-muted small">Noch kein Taster angemeldet.</span>';
   const head = list.map((t, i) => `<th class="text-center" style="color:${TASTER_COLORS[i % TASTER_COLORS.length]}">${escapeHtml(t.letter || "?")}</th>`).join("");
@@ -1801,14 +1804,6 @@ function renderButtonList() {
         ${vitalsHtml(btn)}
       </div>
     `;
-    const logsLink = document.createElement("a");
-    logsLink.className = "btn btn-sm btn-outline-secondary mt-2";
-    logsLink.href = `/api/device-logs/taster/${encodeURIComponent(btn.mac || "")}`;
-    logsLink.download = "";
-    logsLink.draggable = false;
-    logsLink.textContent = "Logs herunterladen";
-    div.appendChild(logsLink);
-
     div.addEventListener("dragstart", ev => {
       div.classList.add("dragging");
       ev.dataTransfer.setData("text/plain", btn.id);

@@ -5,6 +5,7 @@ Jede Version ist als Git-Tag `vX.Y.Z` markiert und kann in der Weboberfläche un
 
 | Version | Datum | Änderung |
 |---|---|---|
+| v0.41.8 | 2026-11-12 | Vitaldaten: Taster-Logs stehen kompakt unter WLAN in der Zustandsübersicht statt auf der Taster-Karte der Stoppuhr-Seite. |
 | v0.41.7 | 2026-11-12 | Ladekoffer-Status: Spannung an leeren Ladeplätzen löst keine Überspannungswarnung mehr aus; die Spannung ist kein zuverlässiger Indikator für einen eingesetzten Akku. |
 | v0.41.6 | 2026-11-12 | Einstellungen/Status: Pi-Anwendungslogs (letzte 500 seit Dienststart) sowie Diagnose-Ringpuffer je Taster und Ladekoffer sind als einzelne Textdateien herunterladbar. Die Geräte halten jeweils die letzten 24 Diagnoseereignisse im RAM und übertragen sie mit den Statusmeldungen; der Pi behält den letzten Snapshot in Redis. |
 | v0.41.5 | 2026-11-11 | Einstellungen → Software und Firmware: Beide Pi-Versionen und die Ladekoffer-Firmware stehen nebeneinander. Koffer-Update startet wie bei den Pis per „Übernehmen und neu starten“; die Oberfläche wartet auf die bestätigte laufende Version und meldet ausbleibende Updates. |
