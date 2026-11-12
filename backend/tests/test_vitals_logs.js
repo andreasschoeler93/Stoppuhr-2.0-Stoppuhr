@@ -8,9 +8,10 @@ function loadApp() {
   const cards = [];
   const list = { innerHTML: "", appendChild: card => cards.push(card) };
   const pool = { addEventListener() {} };
+  const elements = { tasterList: list };
   const document = {
     addEventListener() {},
-    getElementById: id => id === "tasterList" ? list : pool,
+    getElementById: id => elements[id] || pool,
     createElement: () => ({
       classList: { add() {} },
       dataset: {},
@@ -20,7 +21,7 @@ function loadApp() {
   const context = vm.createContext({ document, localStorage: { getItem: () => null }, console });
   const app = fs.readFileSync(path.join(__dirname, "..", "static", "app.js"), "utf8");
   vm.runInContext(app, context);
-  return { context, cards };
+  return { context, cards, elements };
 }
 
 test("Taster logs are below WLAN and belong to each Taster, including offline devices", () => {
@@ -40,6 +41,43 @@ test("Taster logs are below WLAN and belong to each Taster, including offline de
   assert.match(rows[logs], /\/api\/device-logs\/taster\/11%3A22%3A33%3A44%3A55%3A66/);
   assert.equal((rows[logs].match(/ download /g) || []).length, 2);
   assert.match(rows[logs], /<td class="text-center text-nowrap text-muted">–<\/td>/);
+});
+
+test("Alle starten sends one all-slots request and waits for completion", async () => {
+  const { context, elements } = loadApp();
+  const all = { disabled: false, dataset: {}, hasAttribute: name => name === "data-wake-all" };
+  const single = { disabled: false };
+  const status = {};
+  elements.manualWakeButtons = { querySelectorAll: () => [all, single] };
+  elements.manualWakeStatus = status;
+  context.testEvent = { target: { closest: () => all } };
+  vm.runInContext(`apiPost = async (path, body) => {
+    if (path !== "/api/charger/wake" || body.all !== true) throw new Error("wrong request");
+    if (!document.getElementById("manualWakeButtons").querySelectorAll().every(b => b.disabled))
+      throw new Error("buttons not disabled");
+    return { id: "request", timeout_ms: 360000 };
+  };
+  waitForChargerWake = async (id, timeout) => {
+    if (id !== "request" || timeout !== 360000) throw new Error("wrong wait");
+    return { status: "completed" };
+  };`, context);
+  await vm.runInContext("handleManualWake(testEvent)", context);
+  assert.equal(status.textContent, "Alle Plätze: Wecksequenz abgeschlossen.");
+  assert.equal(all.disabled, false);
+  assert.equal(single.disabled, false);
+});
+
+test("Alle starten surfaces a firmware compatibility error", async () => {
+  const { context, elements } = loadApp();
+  const all = { disabled: false, dataset: {}, hasAttribute: () => true };
+  const status = {};
+  elements.manualWakeButtons = { querySelectorAll: () => [all] };
+  elements.manualWakeStatus = status;
+  context.testEvent = { target: { closest: () => all } };
+  vm.runInContext('apiPost = async () => { throw new Error("Firmware ab v0.7.24 erforderlich"); };', context);
+  await vm.runInContext("handleManualWake(testEvent)", context);
+  assert.match(status.textContent, /Firmware ab v0\.7\.24 erforderlich/);
+  assert.equal(all.disabled, false);
 });
 
 test("Taster cards do not contain a log download link", () => {

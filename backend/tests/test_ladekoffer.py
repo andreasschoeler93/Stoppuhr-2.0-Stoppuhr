@@ -30,10 +30,13 @@ class FakeRedis:
     def lrange(self, key, start, end):
         return list(self.lists.get(key, []))
 
-    def set(self, key, value):
+    def set(self, key, value, nx=False):
         if self.fail:
             raise redis.RedisError("READONLY")
+        if nx and key in self.data:
+            return False
         self.data[key] = value
+        return True
 
     def get(self, key):
         if self.fail:
@@ -213,6 +216,47 @@ class EndpointTests(unittest.TestCase):
         result = self.client.get(f"/api/charger/wake/{request_id}")
         self.assertEqual(result.status_code, 200)
         self.assertEqual(result.get_json()["status"], "completed")
+
+    def test_wake_all_runs_configured_sequence_and_waits_for_ack(self):
+        stopwatch.app.config["AUTH_DISABLED"] = True
+        self.client.post("/api/charger", json=payload(fw="v0.7.24"))
+        self.client.post("/api/settings", json={
+            "charger_wake_order": "4,2,1,3,5,6,7,8,9,10",
+            "charger_wake_ms": 30000,
+            "charger_wake_gap_ms": 30000,
+        })
+        queued = self.client.post("/api/charger/wake", json={"all": True})
+        self.assertEqual(queued.status_code, 202)
+        self.assertEqual(queued.json["timeout_ms"], 360000)
+        request_id = queued.json["id"]
+        self.assertEqual(self.client.post("/api/charger/wake", json={"slot": 1}).status_code, 409)
+        reply = self.client.post("/api/charger", json=payload(fw="v0.7.24")).json
+        self.assertEqual(reply["manual_wake"], {"id": request_id, "slot": 0})
+        self.assertEqual(reply["wake"]["order"], [4, 2, 1, 3, 5, 6, 7, 8, 9, 10])
+        self.assertEqual(reply["wake"]["ms"], 30000)
+        self.assertEqual(reply["wake"]["gap_ms"], 30000)
+        self.assertEqual(self.client.get(f"/api/charger/wake/{request_id}").json["status"], "queued")
+        self.assertEqual(
+            self.client.post("/api/charger", json=payload(fw="v0.7.24", wake_ack=request_id)).json["wake_ack"],
+            request_id,
+        )
+        self.assertEqual(self.client.get(f"/api/charger/wake/{request_id}").json["status"], "completed")
+
+    def test_wake_all_rejects_old_firmware_offline_or_busy(self):
+        stopwatch.app.config["AUTH_DISABLED"] = True
+        self.assertEqual(self.client.post("/api/charger/wake", json={"all": True}).status_code, 409)
+        self.client.post("/api/charger", json=payload(fw="v0.7.23"))
+        response = self.client.post("/api/charger/wake", json={"all": True})
+        self.assertEqual(response.status_code, 409)
+        self.assertIn("v0.7.24", response.json["error"])
+        self.client.post("/api/charger", json=payload(fw="v0.7.24", wake_active=True))
+        self.assertEqual(self.client.post("/api/charger/wake", json={"all": True}).status_code, 409)
+        self.assertEqual(self.client.post("/api/charger/wake", json={"all": True, "slot": 1}).status_code, 400)
+
+    def test_wake_all_button_is_available_in_settings(self):
+        stopwatch.app.config["AUTH_DISABLED"] = True
+        html = self.client.get("/").get_data(as_text=True)
+        self.assertIn('data-wake-all>Alle starten</button>', html)
 
     def test_wake_order_requires_each_slot_once(self):
         stopwatch.app.config["AUTH_DISABLED"] = True

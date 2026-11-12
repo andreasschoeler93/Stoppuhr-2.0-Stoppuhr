@@ -1,6 +1,6 @@
 # ----------------------------------------
 # Stoppuhr Webserver
-# Version: v0.41.8
+# Version: v0.41.9
 # Status: stable-beta
 # ----------------------------------------
 
@@ -44,7 +44,7 @@ import node_names
 from xml_writer import create_xml_heats
 
 
-APP_VERSION: Final[str] = "0.41.8"
+APP_VERSION: Final[str] = "0.41.9"
 DEFAULT_PORT: Final[int] = 1999  # Since JAuswertung expected this port
 EXIT_ERROR: Final[int] = 1
 STATE_KEY: Final[str] = "STATE"
@@ -55,6 +55,7 @@ STARTER_FINISH_GRACE_MS: Final[int] = 5000  # Kombirolle: so lange nach Lauf-End
 CLOCK_OFFSET_MIN_MS: Final[int] = 250
 KEEP_HOURS_DEFAULT: Final[float] = 6.0
 MANUAL_WAKE_TIMEOUT_MS: Final[int] = 60_000
+ALL_WAKE_TIMEOUT_MS: Final[int] = 360_000
 HEATS_XML_PATH: Final[str] = os.environ.get("HEATS_XML_PATH", "/app/results/heats.xml")
 
 
@@ -1112,6 +1113,11 @@ def api_post_vitals():
     known_taster = next((t for t in st["tasters"] if t.get("mac") == mac), None)
     if known_taster:
         vitals_history.set_label(redis_store, str(mac), known_taster.get("letter"))
+        device_logs.record_observations(
+            redis_store, mac, dict(new_vital),
+            limits_module.merged(st.get("settings", {}).get("limits"))["taster"],
+            _taster_log_role(st, str(mac)), new_vital["ts"],
+        )
         if "logs" in payload:
             device_logs.save_snapshot(
                 redis_store, "taster", mac, payload.get("fw"), payload.get("uptime_s"),
@@ -1222,8 +1228,13 @@ def api_post_charger():
 def api_request_charger_wake() -> ResponseReturnValue:
     payload = request.get_json(force=True, silent=True) or {}
     slot = payload.get("slot") if isinstance(payload, dict) else None
-    if isinstance(slot, bool) or not isinstance(slot, int) or not 1 <= slot <= ladekoffer.SLOT_COUNT:
+    wake_all = isinstance(payload, dict) and payload.get("all") is True
+    if wake_all and "slot" in payload:
+        return jsonify({"ok": False, "error": "Entweder alle oder einen einzelnen Platz auswählen."}), 400
+    if not wake_all and (isinstance(slot, bool) or not isinstance(slot, int) or not 1 <= slot <= ladekoffer.SLOT_COUNT):
         return jsonify({"ok": False, "error": "slot must be an integer from 1 to 10"}), 400
+    if wake_all:
+        slot = 0
 
     now = now_ms()
     charger = ladekoffer.evaluate(ladekoffer.load(redis_store), now)
@@ -1233,11 +1244,16 @@ def api_request_charger_wake() -> ResponseReturnValue:
     if charger_status.get("wake_active"):
         return jsonify({"ok": False, "error": "Der Ladekoffer führt gerade einen Weckvorgang aus."}), 409
 
-    charger_slot = next((item for item in charger_status.get("slots", []) if item["n"] == slot), None)
-    if not charger_slot:
-        return jsonify({"ok": False, "error": f"Platz {slot} ist beim Ladekoffer unbekannt."}), 409
-    if charger_slot["fault"]:
-        return jsonify({"ok": False, "error": f"Platz {slot} meldet einen Fehler."}), 409
+    if wake_all:
+        version = firmware_store.parse_tag(charger_status.get("fw") or "")
+        if version is None or version < (0, 7, 24):
+            return jsonify({"ok": False, "error": "Alle starten erfordert Ladekoffer-Firmware ab v0.7.24."}), 409
+    else:
+        charger_slot = next((item for item in charger_status.get("slots", []) if item["n"] == slot), None)
+        if not charger_slot:
+            return jsonify({"ok": False, "error": f"Platz {slot} ist beim Ladekoffer unbekannt."}), 409
+        if charger_slot["fault"]:
+            return jsonify({"ok": False, "error": f"Platz {slot} meldet einen Fehler."}), 409
 
     st = load_state()
     pending = st.get("charger_manual_wake")
@@ -1256,10 +1272,11 @@ def api_request_charger_wake() -> ResponseReturnValue:
         "id": request_id,
         "slot": slot,
         "requested_ts": now,
-        "expires_ts": now + MANUAL_WAKE_TIMEOUT_MS,
+        "expires_ts": now + (ALL_WAKE_TIMEOUT_MS if wake_all else MANUAL_WAKE_TIMEOUT_MS),
     }
     save_state(st)
-    return jsonify({"ok": True, "id": request_id, "status": "queued"}), 202
+    return jsonify({"ok": True, "id": request_id, "status": "queued",
+                    "timeout_ms": ALL_WAKE_TIMEOUT_MS if wake_all else MANUAL_WAKE_TIMEOUT_MS}), 202
 
 
 @app.get("/api/charger/wake/<request_id>")
@@ -1393,7 +1410,25 @@ def api_get_charger():
     return jsonify(ladekoffer.evaluate(ladekoffer.load(redis_store), now_ms()))
 
 
-def _device_log_response(snapshot: Optional[dict[str, Any]], filename: str) -> Response:
+def _taster_log_role(st: State, mac: str) -> str:
+    if _is_range_test_taster(st, mac):
+        return "Funktest"
+    lane = _lane_for_mac(st, mac)
+    if lane is not None:
+        return {STARTER_KEY: "Starter", FINISH_KEY: "Zieleinlauf"}.get(lane, f"Bahn {lane}")
+    pending = next(
+        (key for key, value in ((st.get("assignments") or {}).get("pending") or {}).items() if value == mac),
+        None,
+    )
+    if pending:
+        target = {STARTER_KEY: "Starter", FINISH_KEY: "Zieleinlauf"}.get(str(pending), f"Bahn {pending}")
+        return f"Bereitschaft: {target}"
+    return "keine Zuordnung"
+
+
+def _device_log_response(
+    snapshot: Optional[dict[str, Any]], filename: str, observations: Optional[dict[str, Any]] = None,
+) -> Response:
     if not snapshot:
         return Response(
             "Für dieses Gerät wurden noch keine Diagnose-Logs empfangen. Prüfe, ob die aktuelle Firmware installiert ist.",
@@ -1410,7 +1445,32 @@ def _device_log_response(snapshot: Optional[dict[str, Any]], filename: str) -> R
         f"Geräte-Uptime: {snapshot.get('uptime_s') if snapshot.get('uptime_s') is not None else 'unbekannt'} s",
         "",
     ]
-    lines.extend(f"[+{entry['ms']} ms] {entry['text']}" for entry in snapshot.get("entries", []))
+    if snapshot.get("kind") == "taster":
+        lines.append("Geräteereignisse (Uhrzeiten anhand der Pi-Empfangszeit geschätzt):")
+        lines.append("Abweichungen durch Übertragung, Uhrkorrektur und gerundete Laufzeit möglich.")
+        uptime_s = snapshot.get("uptime_s")
+        received_ts = snapshot.get("received_ts")
+        for entry in snapshot.get("entries", []):
+            elapsed_ms = entry["ms"]
+            if (isinstance(uptime_s, int) and not isinstance(uptime_s, bool)
+                    and 0 <= uptime_s <= 0xFFFFFFFF // 1000
+                    and isinstance(received_ts, int) and received_ts > 0
+                    and received_ts >= uptime_s * 1000
+                    and elapsed_ms <= uptime_s * 1000 + 999):
+                estimated = received_ts - uptime_s * 1000 + elapsed_ms
+                stamp = time.strftime("%Y-%m-%d %H:%M:%S %z", time.localtime(estimated / 1000))
+                lines.append(f"[ca. {stamp}; +{elapsed_ms} ms] {entry['text']}")
+            else:
+                lines.append(f"[Uhrzeit unbekannt; +{elapsed_ms} ms] {entry['text']}")
+        if observations:
+            lines.extend(["", "Pi-Beobachtungen (Zeitpunkt der empfangenen Vitaldaten):"])
+            if observations.get("role"):
+                lines.append(f"Letzte bekannte Rolle laut Pi: {observations['role']}")
+            for event in observations.get("events", []):
+                stamp = time.strftime("%Y-%m-%d %H:%M:%S %z", time.localtime(event["ts"] / 1000))
+                lines.append(f"[{stamp}] {event['text']}")
+    else:
+        lines.extend(f"[+{entry['ms']} ms] {entry['text']}" for entry in snapshot.get("entries", []))
     body = "\n".join(lines) + "\n"
     return Response(
         body,
@@ -1423,7 +1483,8 @@ def _device_log_response(snapshot: Optional[dict[str, Any]], filename: str) -> R
 def api_download_taster_logs(mac: str) -> Response:
     snapshot = device_logs.load_snapshot(redis_store, "taster", mac)
     safe_mac = mac.upper().replace(":", "-")
-    return _device_log_response(snapshot, f"taster-{safe_mac}.log")
+    observations = device_logs.load_observations(redis_store, mac)
+    return _device_log_response(snapshot, f"taster-{safe_mac}.log", observations)
 
 
 @app.get("/api/device-logs/charger")

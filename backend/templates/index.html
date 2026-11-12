@@ -259,18 +259,19 @@
 
       <div class="card mb-3">
         <div class="card-body">
-          <h2 class="h6 mb-2">Taster einzeln aus dem Ladekoffer wecken</h2>
+          <h2 class="h6 mb-2">Taster aus dem Ladekoffer wecken</h2>
           <p class="text-muted small mb-3">
-            Wähle einen belegten Ladeplatz. Der Ladekoffer pulst den dafür eingestellten Magnet-Pin
-            für die konfigurierte Impulsdauer. Es werden nur belegte, fehlerfreie Fächer freigegeben.
+            Wähle einen Ladeplatz oder starte alle Taster in der eingestellten Aufweckreihenfolge.
+            Der Ladekoffer kann nicht erkennen, ob ein Platz belegt ist.
           </p>
           <div class="wake-slot-grid" id="manualWakeButtons" aria-label="Ladeplatz zum Wecken auswählen">
             {% for slot in range(1, 11) %}
               <button class="btn btn-outline-primary" type="button" data-wake-slot="{{ slot }}">Platz {{ slot }}</button>
             {% endfor %}
+            <button class="btn btn-primary" type="button" data-wake-all>Alle starten</button>
           </div>
           <div class="small text-muted mt-2" id="manualWakeStatus" role="status" aria-live="polite">
-            Der Ladekoffer muss online sein. Einzel-Wecken erfordert Ladekoffer-Firmware ab v0.6.0.
+            Der Ladekoffer muss online sein. Einzel-Wecken erfordert Firmware ab v0.6.0, „Alle starten“ ab v0.7.24.
           </div>
         </div>
       </div>

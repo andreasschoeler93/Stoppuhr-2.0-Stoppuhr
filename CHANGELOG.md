@@ -5,6 +5,7 @@ Jede Version ist als Git-Tag `vX.Y.Z` markiert und kann in der Weboberfläche un
 
 | Version | Datum | Änderung |
 |---|---|---|
+| v0.41.9 | 2026-11-12 | Taster-Logs: geschätzte lokale Ereigniszeiten sowie vom Pi beobachtete Rollen- und Grenzwertwechsel, ohne zusätzliche Übertragung durch die Taster. Einstellungen: „Alle starten“ führt die konfigurierte Koffer-Wecksequenz aus (Koffer ab v0.7.24). |
 | v0.41.8 | 2026-11-12 | Vitaldaten: Taster-Logs stehen kompakt unter WLAN in der Zustandsübersicht statt auf der Taster-Karte der Stoppuhr-Seite. |
 | v0.41.7 | 2026-11-12 | Ladekoffer-Status: Spannung an leeren Ladeplätzen löst keine Überspannungswarnung mehr aus; die Spannung ist kein zuverlässiger Indikator für einen eingesetzten Akku. |
 | v0.41.6 | 2026-11-12 | Einstellungen/Status: Pi-Anwendungslogs (letzte 500 seit Dienststart) sowie Diagnose-Ringpuffer je Taster und Ladekoffer sind als einzelne Textdateien herunterladbar. Die Geräte halten jeweils die letzten 24 Diagnoseereignisse im RAM und übertragen sie mit den Statusmeldungen; der Pi behält den letzten Snapshot in Redis. |

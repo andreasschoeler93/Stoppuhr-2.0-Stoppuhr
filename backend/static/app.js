@@ -706,13 +706,42 @@ async function apiPost(path, body) {
   return j;
 }
 
-async function waitForChargerWake(requestId) {
-  for (let attempt = 0; attempt < 65; attempt++) {
+async function waitForChargerWake(requestId, timeoutMs) {
+  const deadline = Date.now() + timeoutMs + 5000;
+  while (Date.now() < deadline) {
     await new Promise(resolve => setTimeout(resolve, 1000));
     const result = await apiGet(`/api/charger/wake/${encodeURIComponent(requestId)}`);
     if (result.status !== "queued") return result;
   }
-  throw new Error("Keine Bestätigung vom Ladekoffer innerhalb von 65 Sekunden.");
+  throw new Error("Keine Bestätigung vom Ladekoffer innerhalb der Wartezeit.");
+}
+
+async function handleManualWake(event) {
+  const button = event.target.closest("[data-wake-slot], [data-wake-all]");
+  if (!button || button.disabled) return;
+  const all = button.hasAttribute("data-wake-all");
+  const slot = all ? null : Number(button.dataset.wakeSlot);
+  const label = all ? "Alle Plätze" : `Platz ${slot}`;
+  const buttons = [...byId("manualWakeButtons").querySelectorAll("button")];
+  const status = byId("manualWakeStatus");
+  buttons.forEach(item => { item.disabled = true; });
+  status.className = "small text-muted mt-2";
+  status.textContent = `${label}: Weckbefehl wird an den Ladekoffer gesendet …`;
+  try {
+    const request = await apiPost("/api/charger/wake", all ? { all: true } : { slot });
+    const result = await waitForChargerWake(request.id, request.timeout_ms);
+    if (result.status === "completed") {
+      status.className = "small text-success mt-2";
+      status.textContent = `${label}: Wecksequenz abgeschlossen.`;
+    } else {
+      throw new Error("Der Weckbefehl ist abgelaufen.");
+    }
+  } catch (error) {
+    status.className = "small text-danger mt-2";
+    status.textContent = `${label}: ${error.message}`;
+  } finally {
+    buttons.forEach(item => { item.disabled = false; });
+  }
 }
 
 // -----------------------------
@@ -2093,31 +2122,7 @@ async function init() {
 
   initSleepControls();
 
-  byId("manualWakeButtons").addEventListener("click", async event => {
-    const button = event.target.closest("[data-wake-slot]");
-    if (!button || button.disabled) return;
-    const slot = Number(button.dataset.wakeSlot);
-    const buttons = [...byId("manualWakeButtons").querySelectorAll("button")];
-    const status = byId("manualWakeStatus");
-    buttons.forEach(item => { item.disabled = true; });
-    status.className = "small text-muted mt-2";
-    status.textContent = `Platz ${slot}: Weckbefehl wird an den Ladekoffer gesendet …`;
-    try {
-      const request = await apiPost("/api/charger/wake", { slot });
-      const result = await waitForChargerWake(request.id);
-      if (result.status === "completed") {
-        status.className = "small text-success mt-2";
-        status.textContent = `Platz ${slot}: Weckimpuls ausgelöst.`;
-      } else {
-        throw new Error(`Der Weckbefehl für Platz ${slot} ist abgelaufen.`);
-      }
-    } catch (error) {
-      status.className = "small text-danger mt-2";
-      status.textContent = `Platz ${slot}: ${error.message}`;
-    } finally {
-      buttons.forEach(item => { item.disabled = false; });
-    }
-  });
+  byId("manualWakeButtons").addEventListener("click", handleManualWake);
 
   byId("btnUseClientIp").addEventListener("click", () => {
     if (!clientIp) {
