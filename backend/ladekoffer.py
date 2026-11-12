@@ -49,7 +49,8 @@ def sanitize(payload: Any) -> Optional[dict[str, Any]]:
         slots[n] = {
             "n": n,
             "charging": raw.get("charging") is True,
-            "fault": raw.get("fault") is True,
+            # The charger cannot distinguish an empty slot from a battery by voltage alone.
+            "fault": False,
             "vbat": _num(raw.get("vbat"), 0, 10),
             "since_s": _int(raw.get("since_s"), 0, 10**9),
         }
@@ -65,7 +66,7 @@ def sanitize(payload: Any) -> Optional[dict[str, Any]]:
         "temp_alarm": payload.get("temp_alarm") is True,
         "i2c_ok": payload.get("i2c_ok") is True,
         "light": light if light in LIGHTS else "off",
-        "fault": payload.get("fault") is True,
+        "fault": False,
         "muted": payload.get("muted") is True,
         "wake_active": payload.get("wake_active") is True,
         "slots": [slots[n] for n in sorted(slots)],
@@ -137,16 +138,11 @@ def evaluate(status: Optional[dict[str, Any]], now_ms: int) -> dict[str, Any]:
             messages.append({"level": "error", "text": f"Übertemperatur im Ladekoffer{extra}."})
         if not status.get("i2c_ok"):
             messages.append({"level": "error", "text": "Ladeplatine: Baustein MCP23017 antwortet nicht, Ladestatus unsicher."})
-        for n in sorted(slots):
-            if slots[n]["fault"]:
-                vbat = slots[n].get("vbat")
-                extra = f" ({_comma(vbat, 2)} V)" if vbat is not None else ""
-                messages.append({"level": "error", "text": f"Platz {n}: Akkuspannung zu hoch{extra}."})
         if not status.get("aht_ok") and not status.get("temp_alarm"):
             messages.append({"level": "warn", "text": "Temperatursensor (AHT20) im Ladekoffer fehlt oder liefert nichts."})
 
         has_error = any(m["level"] == "error" for m in messages)
-        if has_error or status.get("fault"):
+        if has_error:
             state = "fehler"
         elif charging:
             state = "laedt"

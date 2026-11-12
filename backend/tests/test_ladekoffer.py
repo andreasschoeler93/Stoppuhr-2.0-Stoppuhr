@@ -106,14 +106,18 @@ class EvaluateTests(unittest.TestCase):
         self.assertEqual(e["state"], "fehler")
         self.assertEqual(e["messages"][0], {"level": "error", "text": "Übertemperatur im Ladekoffer (61,2 °C)."})
 
-    def test_slot_fault_and_sensor(self):
+    def test_empty_slot_voltage_does_not_create_overvoltage_alert(self):
         slots = [slot(n) for n in range(1, 11)]
         slots[6] = slot(7, fault=True, vbat=4.4)
-        e = ladekoffer.evaluate(self._status(slots=slots, aht_ok=False, fault=True), self.NOW)
-        self.assertEqual(e["state"], "fehler")
-        texts = [m["text"] for m in e["messages"]]
-        self.assertIn("Platz 7: Akkuspannung zu hoch (4,40 V).", texts)
-        self.assertTrue(any("AHT20" in t for t in texts))
+        e = ladekoffer.evaluate(self._status(slots=slots, fault=True), self.NOW)
+        self.assertEqual(e["state"], "ruhig")
+        self.assertEqual(e["messages"], [])
+        self.assertFalse(e["status"]["slots"][6]["fault"])
+
+    def test_sensor_warning_is_preserved(self):
+        e = ladekoffer.evaluate(self._status(aht_ok=False), self.NOW)
+        self.assertEqual(e["state"], "ruhig")
+        self.assertTrue(any("AHT20" in m["text"] for m in e["messages"]))
 
     def test_offline(self):
         e = ladekoffer.evaluate(self._status(), self.NOW + ladekoffer.OFFLINE_AFTER_MS + 120_000)
@@ -233,9 +237,9 @@ class EndpointTests(unittest.TestCase):
         self.client.post("/api/charger", json=payload(slots=unknown_slots))
         self.assertEqual(self.client.post("/api/charger/wake", json={"slot": 1}).status_code, 409)
 
-        faulty_slots = [slot(n, fault=n == 2) for n in range(1, 11)]
-        self.client.post("/api/charger", json=payload(slots=faulty_slots))
-        self.assertEqual(self.client.post("/api/charger/wake", json={"slot": 2}).status_code, 409)
+        legacy_fault_slots = [slot(n, fault=n == 2) for n in range(1, 11)]
+        self.client.post("/api/charger", json=payload(slots=legacy_fault_slots))
+        self.assertEqual(self.client.post("/api/charger/wake", json={"slot": 2}).status_code, 202)
 
     def test_redis_down_still_works(self):
         stopwatch.app.config["AUTH_DISABLED"] = True

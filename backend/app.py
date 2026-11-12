@@ -1,6 +1,6 @@
 # ----------------------------------------
 # Stoppuhr Webserver
-# Version: v0.41.5
+# Version: v0.41.7
 # Status: stable-beta
 # ----------------------------------------
 
@@ -18,7 +18,7 @@ import time
 import unicodedata
 import uuid
 import urllib.request
-from collections import defaultdict
+from collections import defaultdict, deque
 from dataclasses import dataclass
 from typing import Any, Final, Optional, TypedDict
 
@@ -32,6 +32,7 @@ import archive
 import auth
 import firmware_store
 import charger_firmware
+import device_logs
 import ladekoffer
 import limits as limits_module
 import node_info
@@ -43,7 +44,7 @@ import node_names
 from xml_writer import create_xml_heats
 
 
-APP_VERSION: Final[str] = "0.41.5"
+APP_VERSION: Final[str] = "0.41.7"
 DEFAULT_PORT: Final[int] = 1999  # Since JAuswertung expected this port
 EXIT_ERROR: Final[int] = 1
 STATE_KEY: Final[str] = "STATE"
@@ -65,7 +66,32 @@ redis_store = redis.Redis(
     db=0,
     decode_responses=True,
 )
-logger = logging.getLogger(__name__)
+logger = app.logger
+
+
+class _MemoryLogHandler(logging.Handler):
+    def __init__(self) -> None:
+        super().__init__(logging.INFO)
+        self._records: deque[str] = deque(maxlen=500)
+        self._lock = threading.Lock()
+        self.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(message)s"))
+
+    def emit(self, record: logging.LogRecord) -> None:
+        try:
+            line = self.format(record)
+            with self._lock:
+                self._records.append(line)
+        except Exception:
+            self.handleError(record)
+
+    def snapshot(self) -> list[str]:
+        with self._lock:
+            return list(self._records)
+
+
+_pi_log_handler = _MemoryLogHandler()
+logger.setLevel(logging.INFO)
+logger.addHandler(_pi_log_handler)
 
 
 class Vital(TypedDict):
@@ -1086,6 +1112,11 @@ def api_post_vitals():
     known_taster = next((t for t in st["tasters"] if t.get("mac") == mac), None)
     if known_taster:
         vitals_history.set_label(redis_store, str(mac), known_taster.get("letter"))
+        if "logs" in payload:
+            device_logs.save_snapshot(
+                redis_store, "taster", mac, payload.get("fw"), payload.get("uptime_s"),
+                payload.get("logs"), new_vital["ts"],
+            )
     return jsonify({"ok": True, "vital": new_vital})
 
 
@@ -1098,6 +1129,11 @@ def api_post_charger():
         return jsonify({"ok": False, "error": "invalid payload"}), 400
     # Der Server-Zeitstempel zaehlt, die Platine hat keine Uhr
     status["ts"] = now_ms()
+    if "logs" in payload:
+        device_logs.save_snapshot(
+            redis_store, "charger", status.get("mac"), status.get("fw"), status.get("uptime_s"),
+            payload.get("logs"), status["ts"],
+        )
     ladekoffer.save(redis_store, status)
     vitals_history.add_charger(redis_store, status["ts"], status)
     vitals_history.add_charger_slot_backfill(redis_store, status["ts"], payload.get("voltage_history"))
@@ -1355,6 +1391,54 @@ def api_post_alert_state() -> ResponseReturnValue:
 def api_get_charger():
     """Zustand des Ladekoffers mit Statusmeldungen; known=false, solange nie etwas gemeldet wurde."""
     return jsonify(ladekoffer.evaluate(ladekoffer.load(redis_store), now_ms()))
+
+
+def _device_log_response(snapshot: Optional[dict[str, Any]], filename: str) -> Response:
+    if not snapshot:
+        return Response(
+            "Für dieses Gerät wurden noch keine Diagnose-Logs empfangen. Prüfe, ob die aktuelle Firmware installiert ist.",
+            status=404,
+            mimetype="text/plain",
+        )
+    received = time.strftime("%Y-%m-%d %H:%M:%S UTC", time.gmtime(snapshot.get("received_ts", 0) / 1000))
+    device_name = {"taster": "Taster", "charger": "Ladekoffer"}.get(snapshot.get("kind"), "Gerät")
+    lines = [
+        f"Gerät: {device_name}",
+        f"MAC: {snapshot.get('mac', '')}",
+        f"Firmware: {snapshot.get('fw') or 'unbekannt'}",
+        f"Zuletzt empfangen: {received}",
+        f"Geräte-Uptime: {snapshot.get('uptime_s') if snapshot.get('uptime_s') is not None else 'unbekannt'} s",
+        "",
+    ]
+    lines.extend(f"[+{entry['ms']} ms] {entry['text']}" for entry in snapshot.get("entries", []))
+    body = "\n".join(lines) + "\n"
+    return Response(
+        body,
+        mimetype="text/plain",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@app.get("/api/device-logs/taster/<mac>")
+def api_download_taster_logs(mac: str) -> Response:
+    snapshot = device_logs.load_snapshot(redis_store, "taster", mac)
+    safe_mac = mac.upper().replace(":", "-")
+    return _device_log_response(snapshot, f"taster-{safe_mac}.log")
+
+
+@app.get("/api/device-logs/charger")
+def api_download_charger_logs() -> Response:
+    return _device_log_response(device_logs.load_charger_snapshot(redis_store), "ladekoffer.log")
+
+
+@app.get("/api/device-logs/pi")
+def api_download_pi_logs() -> Response:
+    records = _pi_log_handler.snapshot()
+    return Response(
+        "\n".join(records) + ("\n" if records else "Noch keine Pi-Dienstlogs seit dem letzten Start.\n"),
+        mimetype="text/plain",
+        headers={"Content-Disposition": 'attachment; filename="pi-stoppuhr.log"'},
+    )
 
 
 VITALS_MAX_POINTS: Final[int] = 1500

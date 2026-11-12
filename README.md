@@ -1,4 +1,4 @@
-# Stoppuhr – Pi-Software (v0.41.5)
+# Stoppuhr – Pi-Software (v0.41.7)
 
 Webbasierte Wettkampf-Stoppuhr: ESP32-Taster messen die Zeit, der Raspberry Pi sammelt, wertet aus und
 liefert die Ergebnisse an JAuswertung. Die Taster-Firmware liegt im Repository `Taster`.
@@ -20,9 +20,12 @@ Versionsverlauf: [CHANGELOG.md](CHANGELOG.md). Zwei-Pi-Betrieb (Koffer und Bad):
   Die Werte kommen aus den ohnehin alle 10 s gesendeten Vitaldaten (kein Mehraufwand am Taster) und liegen in Redis (`VITALS_HIST:<MAC>`, höchstens 48 Stunden).
   Schnittstelle: `GET /api/vitals/history?mac=…&hours=…`.
 - Ladekoffer (ab v0.12.0): Die Ladeplatine (Projekt `Ladekoffer`) sendet alle 5 s per `POST /api/charger` (JSON) Ladezustand („lädt“ / „lädt nicht“) und Spannung der 10 Plätze, Temperatur, Luftfeuchte und Ampel. Der Pi wertet daraus Statusmeldungen aus (Kopfzeile, Meldungen oben, Tabelle im Tab „Vitaldaten“). „Taster da“ und „voll“ lassen sich mit dem TP4056-Modul nicht erkennen und werden nicht angezeigt (ab v0.35.0). Nach 30 s ohne Meldung gilt der Ladekoffer als offline. `GET /api/charger` liefert den ausgewerteten Zustand. Unter Einstellungen lassen sich Ladeplätze einzeln wecken (Pi ab v0.24.0, Ladekoffer-Firmware ab v0.6.0).
+- Die Spannung am Ladeausgang wird ab Pi v0.41.7 und Koffer-Firmware v0.7.23 nicht mehr zur Erkennung von Überspannungsfehlern verwendet: Ein leerer Platz kann ebenfalls eine hohe Spannung anzeigen.
 - Unter dem Ladekoffer-Status im Tab „Vitaldaten“ zeigt ein Diagramm die Akkuspannung aller zehn Ladeplätze über die Zeit; die Kurven lassen sich wie die anderen Vitaldaten per Legende einzeln ein- und ausblenden.
 - Bei WLAN-/Pi-Unterbrechungen puffert die Ladekoffer-Firmware ab v0.7.19 die Spannungsmessungen bis zu einer Stunde im RAM und liefert sie nach Wiederverbindung nach. Der Pi speichert diese Messwerte mit dem ursprünglichen Zeitpunkt (ab v0.41.2); der Puffer übersteht keinen Neustart oder Stromausfall des Koffers.
 - Ladekoffer-Firmware ab v0.7.20 kann nach einem 15-Sekunden-Druck am Koffer alle Taster ohne zugeordnete oder vorgemerkte Rolle ausschalten.
+- Geräte-Logs lassen sich einzeln über die Oberfläche herunterladen: Pi unter **Einstellungen → Software und Firmware**, Taster auf der jeweiligen Taster-Karte und Ladekoffer im Status. Pi-Logs enthalten bis zu 500 Anwendungsereignisse seit dem letzten Dienststart; Taster und Koffer puffern jeweils 24 Diagnoseereignisse seit dem letzten Einschalten. Die Geräte-Snapshots bleiben auf dem Pi in Redis gespeichert und laufen 30 Tage nach der letzten Meldung ab. Erfordert Pi v0.41.6, Taster v0.19.1 und Koffer v0.7.22.
+- Bei wiederholten WLAN-Ausfällen am Koffer enthalten Geräte-Logs ab Koffer v0.7.23 Verbindungsabbrüche, Wiederverbindungsversuche, Signalstärke und Funkkanal.
 - Unter Einstellungen → „Ladekoffer: Taster aufwecken“ lässt sich die Slot-Aufweckreihenfolge einstellen (Pi ab v0.41.4, Koffer ab v0.7.21). Die Pinbelegung der aktuellen Koffer-Platine ist fest; das alte Pin-Einstellfeld wird von aktueller Firmware ignoriert.
 - Unter Einstellungen → „Software und Firmware“ stehen im Zwei-Pi-Betrieb beide Pi-Versionen und die Ladekoffer-Firmware nebeneinander. Das Koffer-Update wird wie bei den Pis mit „Übernehmen und neu starten“ gestartet; die Oberfläche meldet, wenn die neue Version läuft oder nicht bestätigt werden kann.
 - Die Oberfläche hat vier Seiten: **Stoppuhr**, **Vitaldaten** (inklusive Systemstatus), **Archiv** und **Einstellungen**. JAuswertung-Startkarten werden in den Einstellungen geladen; dort kann die IP des aufrufenden Geräts übernommen werden. Koffer-Temperatur und -Luftfeuchte sind ebenfalls als Verlauf sichtbar.

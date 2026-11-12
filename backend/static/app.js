@@ -550,7 +550,9 @@ function chargerStatusHtml() {
   const info = `Temperatur ${colored(s.temp, 1, "°C", lim.temp)} · Luftfeuchte ${colored(s.humidity, 0, "%", lim.humidity)} · WLAN ${colored(s.rssi, 0, "dBm", lim.rssi)} · Firmware ${escapeHtml(s.fw || "–")}`;
   return `<div class="mt-3"><strong class="small">Ladekoffer</strong> <span class="badge ${cls}">${label.replace("Ladekoffer: ", "")}</span>
     <div class="table-responsive mt-1"><table class="table table-sm align-middle mb-0"><thead><tr><th>Platz</th>${head}</tr></thead><tbody>${body}</tbody></table></div>
-    <div class="small text-muted mt-1">${info}</div>${msgs}${chargerVoltageChartHtml()}</div>`;
+    <div class="small text-muted mt-1">${info}</div>
+    <a class="btn btn-sm btn-outline-secondary mt-2" href="/api/device-logs/charger" download>Logs herunterladen</a>
+    ${msgs}${chargerVoltageChartHtml()}</div>`;
 }
 
 function chargerVoltageChartHtml() {
@@ -1799,6 +1801,13 @@ function renderButtonList() {
         ${vitalsHtml(btn)}
       </div>
     `;
+    const logsLink = document.createElement("a");
+    logsLink.className = "btn btn-sm btn-outline-secondary mt-2";
+    logsLink.href = `/api/device-logs/taster/${encodeURIComponent(btn.mac || "")}`;
+    logsLink.download = "";
+    logsLink.draggable = false;
+    logsLink.textContent = "Logs herunterladen";
+    div.appendChild(logsLink);
 
     div.addEventListener("dragstart", ev => {
       div.classList.add("dragging");

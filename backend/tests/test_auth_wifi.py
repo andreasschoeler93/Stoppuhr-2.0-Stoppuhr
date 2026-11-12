@@ -50,6 +50,7 @@ class AuthTests(unittest.TestCase):
 
     def test_api_requires_login(self):
         self.assertEqual(self.client.get("/api/settings").status_code, 401)
+        self.assertEqual(self.client.get("/api/device-logs/pi").status_code, 401)
 
     def test_taster_endpoints_stay_open(self):
         self.assertEqual(self.client.get("/api/version").status_code, 200)
