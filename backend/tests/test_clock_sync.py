@@ -25,6 +25,7 @@ class ClockSyncTests(unittest.TestCase):
         self.add_clock_offset = patch.object(stopwatch.vitals_history, "add_clock_offset")
         self.set_label = patch.object(stopwatch.vitals_history, "set_label")
         self.record_observations = patch.object(stopwatch.device_logs, "record_observations")
+        self.write_heats = patch.object(stopwatch, "_write_heats_xml")
         for patcher in (
             self.load_state,
             self.save_state,
@@ -32,66 +33,74 @@ class ClockSyncTests(unittest.TestCase):
             self.add_clock_offset,
             self.set_label,
             self.record_observations,
+            self.write_heats,
         ):
             patcher.start()
             self.addCleanup(patcher.stop)
         self.addCleanup(stopwatch.app.config.pop, "AUTH_DISABLED", None)
 
-    def send_vital(self, mac, received_ts, offset_ms):
+    def send_vital(self, mac, received_ts, *, clock_synced=False, sync_age_ms=None, offset_ms=440):
         with patch.object(stopwatch, "now_ms", return_value=received_ts):
             response = self.client.post(
                 "/api/vitals",
-                json={"mac": mac, "clock_ms": received_ts - offset_ms},
+                json={
+                    "mac": mac,
+                    "clock_ms": received_ts - offset_ms,
+                    "clock_synced": clock_synced,
+                    "clock_sync_age_ms": sync_age_ms,
+                },
             )
         self.assertEqual(response.status_code, 200)
 
-    def test_waits_until_clock_samples_are_stable(self):
+    def test_waits_for_recent_sntp_sync_from_every_assigned_taster(self):
         mac = "AA:BB"
         self.state["assignments"]["mapping"] = {"starter": mac}
         self.state["tasters"] = [{"mac": mac, "letter": "A", "name": "Starter"}]
         start = 1_800_000_000_000
-        self.send_vital(mac, start, 440)
+        self.send_vital(mac, start)
         self.assertFalse(stopwatch._clock_sync_status(self.state, start)["ready"])
-        self.send_vital(mac, start + 10_000, 441)
-        self.assertFalse(stopwatch._clock_sync_status(self.state, start + 10_000)["ready"])
-        self.send_vital(mac, start + 20_000, 439)
+        self.send_vital(mac, start + 10_000, clock_synced=True, sync_age_ms=1000)
 
-        status = stopwatch._clock_sync_status(self.state, start + 20_000)
+        status = stopwatch._clock_sync_status(self.state, start + 10_000)
 
         self.assertTrue(status["ready"])
         self.assertIn("Start möglich", status["message"])
-        self.assertEqual(len(self.state["clock_sync_samples"][mac]), 3)
 
-    def test_outlier_does_not_change_applied_clock_correction(self):
-        mac = "AA:BB"
-        start = 1_800_000_000_000
-        applied = []
-        for offset in (440, 441, 900, 442):
-            with patch.object(stopwatch, "now_ms", return_value=start):
-                response = self.client.post(
-                    "/api/vitals",
-                    json={"mac": mac, "clock_ms": start - offset},
-                )
-            self.assertEqual(response.status_code, 200)
-            applied.append(self.state["clock_offsets"].get(mac, 0))
-            start += 10_000
-
-        self.assertEqual(applied[2], 440)
-        self.assertEqual(applied[3], 440)
-
-    def test_unstable_clock_samples_keep_status_waiting(self):
+    def test_stale_sntp_sync_keeps_readiness_waiting(self):
         mac = "AA:BB"
         self.state["assignments"]["mapping"] = {"starter": mac}
         self.state["tasters"] = [{"mac": mac, "letter": "A", "name": "Starter"}]
         start = 1_800_000_000_000
-        for offset in (440, 600, 440):
-            self.send_vital(mac, start, offset)
-            start += 10_000
+        self.send_vital(mac, start, clock_synced=True, sync_age_ms=60_001)
 
-        status = stopwatch._clock_sync_status(self.state, start - 10_000)
+        status = stopwatch._clock_sync_status(self.state, start)
 
         self.assertFalse(status["ready"])
-        self.assertIn("nicht stabil", status["message"])
+        self.assertIn("zu alt", status["message"])
+
+    def test_sntp_age_includes_time_since_last_vital(self):
+        mac = "AA:BB"
+        self.state["assignments"]["mapping"] = {"starter": mac}
+        self.state["tasters"] = [{"mac": mac, "letter": "A", "name": "Starter"}]
+        start = 1_800_000_000_000
+        self.send_vital(mac, start, clock_synced=True, sync_age_ms=50_000)
+
+        status = stopwatch._clock_sync_status(self.state, start + 11_000)
+
+        self.assertFalse(status["ready"])
+        self.assertIn("zu alt", status["message"])
+
+    def test_missing_sntp_status_keeps_readiness_waiting(self):
+        mac = "AA:BB"
+        self.state["assignments"]["mapping"] = {"starter": mac}
+        self.state["tasters"] = [{"mac": mac, "letter": "A", "name": "Starter"}]
+        start = 1_800_000_000_000
+        self.send_vital(mac, start)
+
+        status = stopwatch._clock_sync_status(self.state, start)
+
+        self.assertFalse(status["ready"])
+        self.assertIn("warte auf SNTP", status["message"])
 
     def test_no_assigned_taster_is_not_reported_ready(self):
         now = 1_800_000_000_000
@@ -116,6 +125,23 @@ class ClockSyncTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json["points"], points)
         history.assert_called_once()
+
+    def test_one_way_vital_offset_is_not_applied_to_trigger_timestamp(self):
+        mac = "AA:BB"
+        self.state["current_run"] = 1
+        self.state["startcards_per_run"] = {"1": [{"Bahn": "1"}]}
+        self.state["assignments"]["mapping"] = {"starter": mac, "1": "LANE"}
+        self.state["tasters"] = [{"mac": mac, "letter": "A", "name": "Starter"}]
+        self.state["tasters"].append({"mac": "LANE", "letter": "B", "name": "Lane"})
+        start = 1_800_000_000_000
+        self.send_vital(mac, start, offset_ms=440)
+        trigger_ts = start + 10_000
+
+        response = self.client.post("/api/triggers", json={"mac": mac, "ts": trigger_ts})
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(self.state["triggers_per_run"]["1"]["starter"]["ts"], trigger_ts)
+        self.assertEqual(self.state.get("clock_offsets", {}), {})
 
 
 if __name__ == "__main__":

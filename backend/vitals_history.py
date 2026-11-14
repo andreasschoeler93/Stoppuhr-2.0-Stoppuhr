@@ -90,7 +90,7 @@ def history(r: Any, mac: str, since_ms: int = 0) -> list[list[Any]]:
 def add_clock_offset(
     r: Any, mac: str, ts_ms: int, measured_ms: int, applied_ms: int
 ) -> None:
-    """Speichert gemessenen Uhrenversatz und angewandte Korrektur."""
+    """Speichert die Einweg-Differenz; das dritte Feld bleibt für alte Diagrammdaten."""
     try:
         point = [ts_ms, measured_ms, applied_ms]
         key = CLOCK_OFFSET_PREFIX + mac

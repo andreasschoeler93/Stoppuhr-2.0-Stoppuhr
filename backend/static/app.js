@@ -39,8 +39,8 @@ const PI_CHARTS = [
     limits: [["pi", "cpu_temp"], ["pi", "cpu_percent"]] },
 ];
 const CLOCK_OFFSET_CHART = {
-  id: "clock-offset", idx: 1, idx2: 2,
-  title: "Taster-Uhrabweichung (gemessen durch den Pi, durchgezogen; verwendete Korrektur, gestrichelt)",
+  id: "clock-offset", idx: 1,
+  title: "Pi-Empfangszeit minus Taster-Zeitstempel",
   unit: "ms", decimals: 0, zeroLine: true, emptyText: "Noch keine Zeitmessungen vorhanden.",
 };
 const PI_COLORS = { "Koffer-Pi": "#0d6efd", "Bad-Pi": "#fd7e14", "Pi": "#0d6efd" };
@@ -620,7 +620,7 @@ function drawVitals() {
       <canvas id="vc-${c.id || c.idx}" style="width:100%;height:180px"></canvas></div></div></div>`).join("") +
       `<div class="col-12"><div class="card"><div class="card-body p-2">
       <strong class="small">${CLOCK_OFFSET_CHART.title} (${CLOCK_OFFSET_CHART.unit})</strong>
-      <div class="small text-muted">Die gemessene Abweichung enthält auch WLAN-Laufzeit. Der gleitende Niedrigstwert filtert hohe Verzögerungsspitzen, kann den echten Uhrenfehler ohne Hin- und Rückmessung aber nicht exakt bestimmen.</div>
+      <div class="small text-muted">Diese Einweg-Messung enthält WLAN-Laufzeit und zeigt keinen reinen Uhrenfehler. Sie wird nicht zur Korrektur von Wettkampfzeiten verwendet.</div>
     <div id="clockOffsetLegend" class="small mt-1"></div>
     <canvas id="vc-${CLOCK_OFFSET_CHART.id}" style="width:100%;height:180px"></canvas></div></div></div>` +
     `<div class="col-12"><div class="card h-100"><div class="card-body p-2">

@@ -1,6 +1,6 @@
 # ----------------------------------------
 # Stoppuhr Webserver
-# Version: v0.41.16
+# Version: v0.41.17
 # Status: stable-beta
 # ----------------------------------------
 
@@ -44,7 +44,7 @@ import node_names
 from xml_writer import create_xml_heats
 
 
-APP_VERSION: Final[str] = "0.41.16"
+APP_VERSION: Final[str] = "0.41.17"
 DEFAULT_PORT: Final[int] = 1999  # Since JAuswertung expected this port
 EXIT_ERROR: Final[int] = 1
 STATE_KEY: Final[str] = "STATE"
@@ -52,14 +52,7 @@ STARTER_KEY: Final[str] = "starter"
 FINISH_KEY: Final[str] = finish_module.FINISH_KEY
 STARTER_STOP_MIN_MS: Final[int] = 1500  # Zweiter Starter-Druck davor gilt als Prellen
 STARTER_FINISH_GRACE_MS: Final[int] = 5000  # Kombirolle: so lange nach Lauf-Ende zaehlt ein Druck noch als Zieleinlauf
-CLOCK_OFFSET_MIN_MS: Final[int] = 250
-CLOCK_OFFSET_WINDOW_COUNT: Final[int] = 6
-CLOCK_OFFSET_MIN_SAMPLES: Final[int] = 3
-CLOCK_OFFSET_RISE_FACTOR: Final[float] = 0.1
-CLOCK_SYNC_SAMPLE_COUNT: Final[int] = 3
-CLOCK_SYNC_SAMPLE_WINDOW_MS: Final[int] = 15_000
-CLOCK_SYNC_STABLE_SPAN_MS: Final[int] = 100
-CLOCK_SYNC_MAX_CORRECTION_ERROR_MS: Final[int] = 100
+TASTER_CLOCK_SYNC_MAX_AGE_MS: Final[int] = 60_000
 KEEP_HOURS_DEFAULT: Final[float] = 6.0
 MANUAL_WAKE_TIMEOUT_MS: Final[int] = 60_000
 ALL_WAKE_TIMEOUT_MS: Final[int] = 360_000
@@ -113,6 +106,8 @@ class Vital(TypedDict):
     uptime_s: Optional[int]
     ssid: Optional[str]
     wv: Optional[int]
+    clock_synced: bool
+    clock_sync_age_ms: Optional[int]
     online_since: Optional[int]
 
 
@@ -894,8 +889,6 @@ def _clock_sync_status(st: State, now: int) -> dict[str, Any]:
 
     tasters_by_mac = {str(t.get("mac")): t for t in st.get("tasters", [])}
     vitals = st.get("vitals") or {}
-    samples_by_mac = st.get("clock_sync_samples") or {}
-    offsets = st.get("clock_offsets") or {}
     waiting: list[str] = []
     for mac in macs:
         taster = tasters_by_mac.get(mac) or {}
@@ -905,40 +898,17 @@ def _clock_sync_status(st: State, now: int) -> dict[str, Any]:
             waiting.append(f"Taster {letter} ist offline")
             continue
 
-        samples = samples_by_mac.get(mac)
-        recent: list[dict[str, int]] = []
-        if isinstance(samples, list):
-            for sample in samples:
-                if not isinstance(sample, dict):
-                    continue
-                try:
-                    sample_ts = int(sample["ts"])
-                    sample_offset = int(sample["offset_ms"])
-                except (KeyError, TypeError, ValueError):
-                    continue
-                if 0 <= now - sample_ts <= TASTER_ONLINE_TIMEOUT_MS:
-                    recent.append({"ts": sample_ts, "offset_ms": sample_offset})
-        recent.sort(key=lambda sample: sample["ts"])
-        recent = recent[-CLOCK_SYNC_SAMPLE_COUNT:]
-        if len(recent) < CLOCK_SYNC_SAMPLE_COUNT:
-            waiting.append(f"Taster {letter}: warte auf drei gültige Zeitmeldungen")
+        if vital.get("clock_synced") is not True:
+            waiting.append(f"Taster {letter}: warte auf SNTP-Synchronisierung")
             continue
-        if recent[-1]["ts"] - recent[0]["ts"] < CLOCK_SYNC_SAMPLE_WINDOW_MS:
-            waiting.append(f"Taster {letter}: Zeitmeldungen liegen noch zu dicht beieinander")
-            continue
-
-        sample_offsets = [sample["offset_ms"] for sample in recent]
-        if max(sample_offsets) - min(sample_offsets) > CLOCK_SYNC_STABLE_SPAN_MS:
-            waiting.append(f"Taster {letter}: Uhrabweichung ist noch nicht stabil")
-            continue
-
         try:
-            correction = int(offsets[mac])
+            sync_age_ms = int(vital["clock_sync_age_ms"])
         except (KeyError, TypeError, ValueError):
-            waiting.append(f"Taster {letter}: Zeitkorrektur wird noch ermittelt")
+            waiting.append(f"Taster {letter}: SNTP-Status fehlt")
             continue
-        if abs(correction - min(sample_offsets)) > CLOCK_SYNC_MAX_CORRECTION_ERROR_MS:
-            waiting.append(f"Taster {letter}: Zeitkorrektur gleicht sich noch an")
+        sync_age_ms += max(0, now - int(vital["ts"]))
+        if sync_age_ms < 0 or sync_age_ms > TASTER_CLOCK_SYNC_MAX_AGE_MS:
+            waiting.append(f"Taster {letter}: SNTP-Synchronisierung ist zu alt")
 
     if waiting:
         return {
@@ -948,33 +918,8 @@ def _clock_sync_status(st: State, now: int) -> dict[str, Any]:
         }
     return {
         "ready": True,
-        "message": f"Zeitabgleich stabil: alle {len(macs)} zugeordneten Taster sind bereit. Start möglich.",
+        "message": f"SNTP-Zeit aller {len(macs)} zugeordneten Taster ist aktuell. Start möglich.",
     }
-
-
-def _update_clock_offset(
-    st: State, mac: str, received_ts: int, clock_ms: int
-) -> tuple[int, int]:
-    """Schaetzt den Offset mit einem gleitenden Niedrigstwert, um WLAN-Spitzen auszufiltern."""
-    samples_by_mac = st.setdefault("clock_offset_samples", {})
-    samples = samples_by_mac.setdefault(mac, [])
-    measured_ms = received_ts - clock_ms
-    samples.append(measured_ms)
-    samples = samples[-CLOCK_OFFSET_WINDOW_COUNT:]
-    samples_by_mac[mac] = samples
-
-    offsets = st.setdefault("clock_offsets", {})
-    if len(samples) < CLOCK_OFFSET_MIN_SAMPLES:
-        return measured_ms, int(offsets.get(mac, 0))
-
-    estimate = min(samples)
-    previous = offsets.get(mac)
-    if previous is None or estimate < int(previous):
-        applied_ms = estimate
-    else:
-        applied_ms = int(int(previous) + (estimate - int(previous)) * CLOCK_OFFSET_RISE_FACTOR)
-    offsets[mac] = applied_ms
-    return measured_ms, applied_ms
 
 
 def _taster_with_vitals(taster: Taster, vitals: dict[str, Vital]) -> dict[str, Any]:
@@ -1210,6 +1155,13 @@ def api_post_vitals():
         "uptime_s": payload.get("uptime_s"),
         "ssid": payload.get("ssid"),
         "wv": payload.get("wv") if isinstance(payload.get("wv"), int) else None,
+        "clock_synced": payload.get("clock_synced") is True,
+        "clock_sync_age_ms": (
+            payload.get("clock_sync_age_ms")
+            if isinstance(payload.get("clock_sync_age_ms"), int)
+            and payload.get("clock_sync_age_ms") >= 0
+            else None
+        ),
     }
     # Beginn der aktuellen Online-Phase: bleibt, solange die Meldungen nicht laenger als der Timeout ausbleiben
     prev = st["vitals"].get(mac) or {}
@@ -1217,25 +1169,11 @@ def api_post_vitals():
     continuing = prev_ts and new_vital["ts"] - int(prev_ts) <= TASTER_ONLINE_TIMEOUT_MS
     new_vital["online_since"] = (prev.get("online_since") or prev_ts) if continuing else new_vital["ts"]
     st["vitals"][mac] = new_vital
-    # Uhrversatz Taster -> Server lernen (Server-Zeit minus Taster-Zeit); Sprung nach unten
-    # sofort uebernehmen (geringste Latenz), nach oben nur langsam (Netzwerkjitter).
+    # Einweg-Messungen enthalten WLAN-Laufzeit und werden daher nie als Zeitkorrektur angewandt.
     clock_ms = payload.get("clock_ms")
-    sync_samples = st.setdefault("clock_sync_samples", {})
     clock_sample = None
-    if not continuing:
-        sync_samples.pop(mac, None)
-        st.setdefault("clock_offset_samples", {}).pop(mac, None)
-        st.setdefault("clock_offsets", {}).pop(mac, None)
     if isinstance(clock_ms, (int, float)) and clock_ms > 1_700_000_000_000:
-        measured_ms, applied_ms = _update_clock_offset(st, mac, received_ts, int(clock_ms))
-        clock_sample = (measured_ms, applied_ms)
-        samples = sync_samples.setdefault(mac, [])
-        samples.append({"ts": received_ts, "offset_ms": measured_ms})
-        sync_samples[mac] = samples[-CLOCK_SYNC_SAMPLE_COUNT:]
-    else:
-        sync_samples.pop(mac, None)
-        st.setdefault("clock_offset_samples", {}).pop(mac, None)
-        st.setdefault("clock_offsets", {}).pop(mac, None)
+        clock_sample = (received_ts - int(clock_ms), 0)
     save_state(st)
     if clock_sample is not None:
         vitals_history.add_clock_offset(
@@ -1663,7 +1601,7 @@ def api_vitals_history():
 
 @app.get("/api/clock-offset/history")
 def api_clock_offset_history():
-    """Gemessene und angewandte Taster-Uhrabweichung der letzten Stunden."""
+    """Einweg-Differenz zwischen Pi-Empfangszeit und Taster-Zeitstempel."""
     mac = request.args.get("mac", "")
     hours = min(
         max(request.args.get("hours", default=KEEP_HOURS_DEFAULT, type=float), 0.1),
@@ -2626,13 +2564,6 @@ def _handle_trigger(st: State, payload: dict[str, Any], replay: bool = False):
         if _is_range_test_taster(st, mac_norm):
             return jsonify({"ok": True, "ignored": True, "reason": "range_test"})
         lane = _lane_for_mac(st, mac_norm)
-        # Zeitstempel des Tasters auf die Serveruhr umrechnen. Kleine Versaetze sind nur
-        # Netzwerklatenz (je Taster verschieden) und wuerden die Zeiten verfaelschen; korrigiert
-        # wird nur bei grober Abweichung (Taster nicht auf Serverzeit synchronisiert).
-        offset = int((st.get("clock_offsets") or {}).get(mac_norm, 0))
-        if abs(offset) > CLOCK_OFFSET_MIN_MS:
-            ts_val += offset
-
     if lane is None:
         swapped = _try_pending_swap(st, mac_norm)
         if swapped == "waiting":
@@ -2692,8 +2623,7 @@ def _handle_trigger(st: State, payload: dict[str, Any], replay: bool = False):
             # Der Lauf wirkte nur komplett, weil Stopps des naechsten Laufs vorab eintrafen:
             # dieser Druck ist das Lauf-Ende, die spaeten Stopps gehoeren zum naechsten Lauf
             for late_lane, late_press in late.items():
-                late_offset = int((st.get("clock_offsets") or {}).get(late_press["mac"], 0))
-                raw_ts = int(late_press["ts"]) - (late_offset if abs(late_offset) > CLOCK_OFFSET_MIN_MS else 0)
+                raw_ts = int(late_press["ts"])
                 old_presses[late_lane] = None
                 _defer_press(st, late_press["mac"], raw_ts)
             st["triggers_per_run"][current_key] = old_presses
@@ -2726,8 +2656,7 @@ def _handle_trigger(st: State, payload: dict[str, Any], replay: bool = False):
         for late_lane, late_press in list(triggers_per_run[current_key].items()):
             if late_lane == STARTER_KEY or not late_press or int(late_press["ts"]) <= ts_val:
                 continue
-            late_offset = int((st.get("clock_offsets") or {}).get(late_press["mac"], 0))
-            raw_ts = int(late_press["ts"]) - (late_offset if abs(late_offset) > CLOCK_OFFSET_MIN_MS else 0)
+            raw_ts = int(late_press["ts"])
             triggers_per_run[current_key][late_lane] = None
             _defer_press(st, late_press["mac"], raw_ts)
         st["triggers_per_run"] = triggers_per_run
