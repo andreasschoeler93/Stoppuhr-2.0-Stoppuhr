@@ -5,6 +5,7 @@ Jede Version ist als Git-Tag `vX.Y.Z` markiert und kann in der Weboberfläche un
 
 | Version | Datum | Änderung |
 |---|---|---|
+| v0.41.14 | 2026-11-14 | Wettkampf ohne Taster-Abschaltung beenden: Taster, Buchstaben und Zuordnungen bleiben erhalten. |
 | v0.41.13 | 2026-11-14 | Wettkampf kann beendet werden, ohne die Taster auszuschalten. |
 | v0.41.12 | 2026-11-12 | Vorzeitige Bahndrücke mit leerem Zeit-Eintrag zählen nicht mehr als abgeschlossene Bahnen; der Lauf bleibt bis zu gültigen Stopps aktiv. |
 | v0.41.11 | 2026-11-12 | Starter-Abbruch: Ein direkt gesendeter Starterdruck kann anschließend gezielt abgebrochen werden; veraltete Anfragen werden abgelehnt und Wiederholungen erkannt (Taster ab v0.19.2). |

@@ -1,6 +1,6 @@
 # ----------------------------------------
 # Stoppuhr Webserver
-# Version: v0.41.13
+# Version: v0.41.14
 # Status: stable-beta
 # ----------------------------------------
 
@@ -44,7 +44,7 @@ import node_names
 from xml_writer import create_xml_heats
 
 
-APP_VERSION: Final[str] = "0.41.13"
+APP_VERSION: Final[str] = "0.41.14"
 DEFAULT_PORT: Final[int] = 1999  # Since JAuswertung expected this port
 EXIT_ERROR: Final[int] = 1
 STATE_KEY: Final[str] = "STATE"
@@ -739,10 +739,11 @@ def api_end_competition() -> ResponseReturnValue:
         "max_lane": 0,
         "runs": [],
     }
-    st["tasters"] = []
-    st["vitals"] = {}
     st["results"] = {}
-    st["assignments"] = {"mapping": {}, "pending": {}, "last_update_ts": None}
+    if shutdown_tasters:
+        st["tasters"] = []
+        st["vitals"] = {}
+        st["assignments"] = {"mapping": {}, "pending": {}, "last_update_ts": None}
     st["startcards_per_run"] = {}
     st["triggers_per_run"] = {}
     st["finish_per_run"] = {}

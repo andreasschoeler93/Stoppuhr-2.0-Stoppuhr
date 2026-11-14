@@ -2209,8 +2209,10 @@ async function init() {
     const shutdownTasters = event.currentTarget.id === "btnEndCompetition";
     const confirmed = window.confirm(
       "Wettkampf wirklich beenden?\n\n" +
-      "Startkarten, Laufzeiten, Ergebnisse und Taster-Zuordnungen werden gelöscht. " +
-      (shutdownTasters ? "Erreichbare Taster schalten sich aus." : "Die Taster bleiben eingeschaltet.")
+      "Startkarten, Laufzeiten und Ergebnisse werden gelöscht. " +
+      (shutdownTasters
+        ? "Taster-Zuordnungen werden gelöscht und erreichbare Taster schalten sich aus."
+        : "Taster, Buchstaben und Zuordnungen bleiben erhalten.")
     );
     if (!confirmed) return;
 
@@ -2241,7 +2243,7 @@ async function init() {
         `Wettkampf beendet${result.archive_id ? " und im Archiv gespeichert" : ""}. ` +
         (result.shutdown_tasters
           ? `Der Abschaltbefehl ist ${result.shutdown_grace_s} Sekunden aktiv.`
-          : "Die Taster bleiben eingeschaltet.")
+          : "Taster, Buchstaben und Zuordnungen bleiben erhalten.")
       );
     } catch (e) {
       alert("Wettkampf konnte nicht beendet werden: " + e.message);

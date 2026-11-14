@@ -1,4 +1,4 @@
-# Stoppuhr – Pi-Software (v0.41.13)
+# Stoppuhr – Pi-Software (v0.41.14)
 
 Webbasierte Wettkampf-Stoppuhr: ESP32-Taster messen die Zeit, der Raspberry Pi sammelt, wertet aus und
 liefert die Ergebnisse an JAuswertung. Die Taster-Firmware liegt im Repository `Taster`.
