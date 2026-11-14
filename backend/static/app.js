@@ -2205,11 +2205,12 @@ async function init() {
     }
   });
 
-  byId("btnEndCompetition").addEventListener("click", async event => {
+  const endCompetition = async event => {
+    const shutdownTasters = event.currentTarget.id === "btnEndCompetition";
     const confirmed = window.confirm(
       "Wettkampf wirklich beenden?\n\n" +
       "Startkarten, Laufzeiten, Ergebnisse und Taster-Zuordnungen werden gelöscht. " +
-      "Erreichbare Taster schalten sich aus."
+      (shutdownTasters ? "Erreichbare Taster schalten sich aus." : "Die Taster bleiben eingeschaltet.")
     );
     if (!confirmed) return;
 
@@ -2221,10 +2222,13 @@ async function init() {
     );
     if (nameInput === null) return;
 
-    const button = event.currentTarget;
-    button.disabled = true;
+    const buttons = [byId("btnEndCompetition"), byId("btnEndCompetitionKeepTasters")];
+    buttons.forEach(button => { button.disabled = true; });
     try {
-      const result = await apiPost("/api/competition/end", { name: nameInput.trim() });
+      const result = await apiPost("/api/competition/end", {
+        name: nameInput.trim(),
+        shutdown_tasters: shutdownTasters
+      });
       startcards = { rows: [], max_lane: 0, runs: [], source_url: null, last_fetch_ts: null, error: null };
       currentRun = null;
       maxLane = 10;
@@ -2233,13 +2237,20 @@ async function init() {
       updateStartcardsStatusLine();
       resetSetupPlacement();
       await Promise.all([loadButtons(), loadRunStatus()]);
-      alert(`Wettkampf beendet${result.archive_id ? " und im Archiv gespeichert" : ""}. Der Abschaltbefehl ist ${result.shutdown_grace_s} Sekunden aktiv.`);
+      alert(
+        `Wettkampf beendet${result.archive_id ? " und im Archiv gespeichert" : ""}. ` +
+        (result.shutdown_tasters
+          ? `Der Abschaltbefehl ist ${result.shutdown_grace_s} Sekunden aktiv.`
+          : "Die Taster bleiben eingeschaltet.")
+      );
     } catch (e) {
       alert("Wettkampf konnte nicht beendet werden: " + e.message);
     } finally {
-      button.disabled = false;
+      buttons.forEach(button => { button.disabled = false; });
     }
-  });
+  };
+  byId("btnEndCompetition").addEventListener("click", endCompetition);
+  byId("btnEndCompetitionKeepTasters").addEventListener("click", endCompetition);
 
   byId("btnClearStarter").addEventListener("click", () => unassignLane("starter"));
   byId("btnClearFinish").addEventListener("click", () => unassignLane("ziel"));

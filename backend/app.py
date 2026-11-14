@@ -701,14 +701,19 @@ def api_set_limits() -> ResponseReturnValue:
 @app.post("/api/competition/end")
 def api_end_competition() -> ResponseReturnValue:
     st = load_state()
-    try:
-        shutdown_grace_s = int(st.get("settings", {}).get("shutdown_grace_s", "10"))
-    except (TypeError, ValueError):
-        return jsonify({"ok": False, "error": "invalid shutdown_grace_s setting"}), 500
-    if not 1 <= shutdown_grace_s <= 86_400:
-        return jsonify({"ok": False, "error": "invalid shutdown_grace_s setting"}), 500
-
     payload = request.get_json(force=True, silent=True) or {}
+    shutdown_tasters = payload.get("shutdown_tasters", True)
+    if not isinstance(shutdown_tasters, bool):
+        return jsonify({"ok": False, "error": "shutdown_tasters must be a boolean"}), 400
+    shutdown_grace_s = 0
+    if shutdown_tasters:
+        try:
+            shutdown_grace_s = int(st.get("settings", {}).get("shutdown_grace_s", "10"))
+        except (TypeError, ValueError):
+            return jsonify({"ok": False, "error": "invalid shutdown_grace_s setting"}), 500
+        if not 1 <= shutdown_grace_s <= 86_400:
+            return jsonify({"ok": False, "error": "invalid shutdown_grace_s setting"}), 500
+
     name = str(payload.get("name") or "").strip()[:80]
     archive_id = None
     if name:
@@ -723,7 +728,7 @@ def api_end_competition() -> ResponseReturnValue:
     for t in st.get("tasters", []):
         vitals_history.set_label(redis_store, str(t.get("mac")), t.get("letter"))
 
-    st["shutdown_until_ms"] = now_ms() + shutdown_grace_s * 1000
+    st["shutdown_until_ms"] = now_ms() + shutdown_grace_s * 1000 if shutdown_tasters else 0
     st["startcards"] = {
         "loaded": False,
         "last_fetch_ts": None,
@@ -765,6 +770,7 @@ def api_end_competition() -> ResponseReturnValue:
             "archive_id": archive_id,
             "shutdown_until_ms": st["shutdown_until_ms"],
             "shutdown_grace_s": shutdown_grace_s,
+            "shutdown_tasters": shutdown_tasters,
         }
     )
 
