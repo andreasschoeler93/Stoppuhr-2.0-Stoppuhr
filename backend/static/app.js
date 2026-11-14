@@ -38,8 +38,14 @@ const PI_CHARTS = [
   { id: "pi1", idx: 1, idx2: 2, title: "Pi CPU-Temperatur (durchgezogen) und CPU-Last (gestrichelt)", unit: "°C / %", pi: true, min: 0, max: 100,
     limits: [["pi", "cpu_temp"], ["pi", "cpu_percent"]] },
 ];
+const CLOCK_OFFSET_CHART = {
+  id: "clock-offset", idx: 1, idx2: 2,
+  title: "Taster-Uhrabweichung (gemessen durch den Pi, durchgezogen; verwendete Korrektur, gestrichelt)",
+  unit: "ms", decimals: 0, zeroLine: true, emptyText: "Noch keine Zeitmessungen vorhanden.",
+};
 const PI_COLORS = { "Koffer-Pi": "#0d6efd", "Bad-Pi": "#fd7e14", "Pi": "#0d6efd" };
 let vitalsData = null;
+let clockOffsetSeries = [];
 let chargerSeries = [];
 let chargerVoltageSeries = [];
 let chargerCurrentSeries = [];
@@ -89,6 +95,11 @@ function buildArchiveVitals(a) {
   const series = list.map((t, i) => ({
     label: `Taster ${t.letter || "?"}`, color: TASTER_COLORS[i % TASTER_COLORS.length], points: (a.vitals || {})[t.mac] || [],
   }));
+  clockOffsetSeries = list.map((t, i) => ({
+    label: `Taster ${t.letter || "?"}`,
+    color: TASTER_COLORS[i % TASTER_COLORS.length],
+    points: (a.clock_offsets || {})[t.mac] || [],
+  }));
   const piSeries = Object.entries(a.pi || {}).map(([n, pts]) => ({ label: n, color: PI_COLORS[n] || "#0d6efd", points: pts }));
   chargerSeries = a.charger?.length
     ? [{ label: "Ladekoffer", color: "#20a4a8", points: a.charger.map(([ts, temp, humidity]) => [ts, null, null, temp, humidity, null]) }]
@@ -136,6 +147,15 @@ async function refreshVitals() {
     const d = await apiGet(`/api/vitals/history?mac=${encodeURIComponent(t.mac)}&hours=${fetchH}`).catch(() => ({ points: [] }));
     if (d.starts && d.starts.length) starts = d.starts;
     return { label: `Taster ${t.letter || "?"}${t.old ? " (früher)" : ""}`, color: TASTER_COLORS[i % TASTER_COLORS.length], points: d.points || [] };
+  }));
+  clockOffsetSeries = await Promise.all(plotted.map(async (t, i) => {
+    const d = await apiGet(`/api/clock-offset/history?mac=${encodeURIComponent(t.mac)}&hours=${fetchH}`)
+      .catch(() => ({ points: [] }));
+    return {
+      label: `Taster ${t.letter || "?"}${t.old ? " (früher)" : ""}`,
+      color: TASTER_COLORS[i % TASTER_COLORS.length],
+      points: d.points || [],
+    };
   }));
   const pi = await apiGet(`/api/vitals/pi?hours=${fetchH}`).catch(() => ({ nodes: [] }));
   if (!starts.length && pi.starts) starts = pi.starts;
@@ -598,8 +618,24 @@ function drawVitals() {
     box.innerHTML = VITAL_CHARTS.concat(PI_CHARTS).map(c => `<div class="col-lg-6"><div class="card"><div class="card-body p-2">
       <strong class="small">${c.title} (${c.unit})</strong>
       <canvas id="vc-${c.id || c.idx}" style="width:100%;height:180px"></canvas></div></div></div>`).join("") +
-      `<div class="col-12"><div class="card h-100"><div class="card-body p-2">
-      <strong class="small">Zustand der Taster und Pis</strong><div id="vitalsStatus" class="mt-1"></div></div></div></div>`;
+      `<div class="col-12"><div class="card"><div class="card-body p-2">
+      <strong class="small">${CLOCK_OFFSET_CHART.title} (${CLOCK_OFFSET_CHART.unit})</strong>
+      <div class="small text-muted">Die gemessene Abweichung enthält auch WLAN-Laufzeit. Der gleitende Niedrigstwert filtert hohe Verzögerungsspitzen, kann den echten Uhrenfehler ohne Hin- und Rückmessung aber nicht exakt bestimmen.</div>
+    <div id="clockOffsetLegend" class="small mt-1"></div>
+    <canvas id="vc-${CLOCK_OFFSET_CHART.id}" style="width:100%;height:180px"></canvas></div></div></div>` +
+    `<div class="col-12"><div class="card h-100"><div class="card-body p-2">
+    <strong class="small">Zustand der Taster und Pis</strong><div id="vitalsStatus" class="mt-1"></div></div></div></div>`;
+  }
+  const clockLegend = byId("clockOffsetLegend");
+  clockLegend.innerHTML = clockOffsetSeries.length
+    ? clockOffsetSeries.map(legend).join("")
+    : '<span class="text-muted">Keine Taster-Zeitdaten im gewählten Zeitraum.</span>';
+  if (!clockLegend.dataset.bound) {
+    clockLegend.dataset.bound = "1";
+    clockLegend.addEventListener("click", e => {
+    const el = e.target.closest("[data-series]");
+    if (el) toggleSeries(el.dataset.series);
+    });
   }
   byId("vitalsStatus").innerHTML = vitalsData.archive
     ? '<span class="text-muted small">Archivierter Wettkampf – der aktuelle Zustand wird nicht angezeigt.</span>' + chargerVoltageChartHtml() + chargerCurrentChartHtml()
@@ -623,6 +659,10 @@ function drawVitals() {
   }
   VITAL_CHARTS.forEach(c => drawVitalChart(c, s));
   PI_CHARTS.forEach(c => drawVitalChart(c, vitalsData.piSeries));
+  drawVitalChart({
+    ...CLOCK_OFFSET_CHART,
+    emptyText: vitalsData.archive ? "Für archivierte Wettkämpfe nicht verfügbar." : CLOCK_OFFSET_CHART.emptyText,
+  }, clockOffsetSeries);
 }
 
 function drawVitalChart(c, series) {
@@ -642,7 +682,11 @@ function drawVitalChart(c, series) {
     data: s.points.filter(p => (c.id === "charger-current" || p[ci] !== null) && p[0] >= t0 && p[0] <= t1).map(p => [p[0], p[ci] ?? null]),
   })));
   const all = lines.flatMap(l => l.data.map(d => d[1]).filter(v => v !== null));
-  if (!all.length) { g.fillStyle = "#888"; g.font = "12px sans-serif"; g.fillText("keine Daten", 10, 20); return; }
+  if (!all.length) {
+    g.fillStyle = "#888"; g.font = "12px sans-serif";
+    g.fillText(c.emptyText || "keine Daten", 10, 20);
+    return;
+  }
   const dec = c.decimals ?? 0;
   let lo = c.min ?? Math.min(...all);
   let hi = c.max ?? Math.max(...all);
@@ -670,6 +714,10 @@ function drawVitalChart(c, series) {
     const v = lo + (hi - lo) * i / 4, yy = y(v);
     g.beginPath(); g.moveTo(L, yy); g.lineTo(w - R, yy); g.stroke();
     g.textAlign = "right"; g.fillText(v.toFixed(dec), L - 4, yy + 4);
+  }
+  if (c.zeroLine && lo < 0 && hi > 0) {
+    g.beginPath(); g.strokeStyle = "#555"; g.setLineDash([3, 3]);
+    g.moveTo(L, y(0)); g.lineTo(w - R, y(0)); g.stroke(); g.setLineDash([]);
   }
   g.textAlign = "center";
   for (let i = 0; i <= 3; i++) {

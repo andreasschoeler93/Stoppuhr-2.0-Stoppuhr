@@ -19,6 +19,8 @@ CHARGER_SLOTS_KEY: Final[str] = "CHARGER_SLOTS_HIST"
 CHARGER_SLOT_COUNT: Final[int] = 10
 CHARGER_BACKFILL_MAX_AGE_MS: Final[int] = 2 * 60 * 60 * 1000
 CHARGER_BACKFILL_BATCH_SIZE: Final[int] = 60
+CLOCK_OFFSET_PREFIX: Final[str] = "CLOCK_OFFSET_HIST:"
+CLOCK_OFFSET_MAX_POINTS: Final[int] = KEEP_HOURS * 360 + 60
 
 
 def _num(value: Any) -> float | None:
@@ -82,6 +84,42 @@ def history(r: Any, mac: str, since_ms: int = 0) -> list[list[Any]]:
             continue
         if isinstance(p, list) and len(p) == len(FIELDS) + 1 and p[0] >= since_ms:
             points.append(p)
+    return points
+
+
+def add_clock_offset(
+    r: Any, mac: str, ts_ms: int, measured_ms: int, applied_ms: int
+) -> None:
+    """Speichert gemessenen Uhrenversatz und angewandte Korrektur."""
+    try:
+        point = [ts_ms, measured_ms, applied_ms]
+        key = CLOCK_OFFSET_PREFIX + mac
+        pipe = r.pipeline()
+        pipe.rpush(key, json.dumps(point, separators=(",", ":")))
+        pipe.ltrim(key, -CLOCK_OFFSET_MAX_POINTS, -1)
+        pipe.execute()
+    except Exception:  # noqa: BLE001
+        pass
+
+
+def clock_offset_history(r: Any, mac: str, since_ms: int = 0) -> list[list[Any]]:
+    try:
+        raw = r.lrange(CLOCK_OFFSET_PREFIX + mac, 0, -1)
+    except Exception:  # noqa: BLE001
+        return []
+    points: list[list[Any]] = []
+    for item in raw:
+        try:
+            point = json.loads(item)
+        except ValueError:
+            continue
+        if (
+            isinstance(point, list)
+            and len(point) == 3
+            and isinstance(point[0], (int, float))
+            and point[0] >= since_ms
+        ):
+            points.append(point)
     return points
 
 

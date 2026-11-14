@@ -33,6 +33,16 @@ class VitalsHistoryTest(unittest.TestCase):
         self.assertEqual(pts, [[2000, None, None, None, None, None]])
         self.assertEqual(vitals_history.history(r, "BB"), [])
 
+    def test_clock_offset_history_stores_measured_and_applied_values(self):
+        r = FakeRedis()
+        vitals_history.add_clock_offset(r, "AA", 1000, 440, 440)
+        vitals_history.add_clock_offset(r, "AA", 2000, 900, 440)
+
+        self.assertEqual(
+            vitals_history.clock_offset_history(r, "AA", since_ms=1500),
+            [[2000, 900, 440]],
+        )
+
     def test_limit(self):
         r = FakeRedis()
         for i in range(vitals_history.MAX_POINTS + 5):

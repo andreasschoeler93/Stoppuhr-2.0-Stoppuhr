@@ -1,6 +1,6 @@
 # ----------------------------------------
 # Stoppuhr Webserver
-# Version: v0.41.15
+# Version: v0.41.16
 # Status: stable-beta
 # ----------------------------------------
 
@@ -44,7 +44,7 @@ import node_names
 from xml_writer import create_xml_heats
 
 
-APP_VERSION: Final[str] = "0.41.15"
+APP_VERSION: Final[str] = "0.41.16"
 DEFAULT_PORT: Final[int] = 1999  # Since JAuswertung expected this port
 EXIT_ERROR: Final[int] = 1
 STATE_KEY: Final[str] = "STATE"
@@ -53,6 +53,9 @@ FINISH_KEY: Final[str] = finish_module.FINISH_KEY
 STARTER_STOP_MIN_MS: Final[int] = 1500  # Zweiter Starter-Druck davor gilt als Prellen
 STARTER_FINISH_GRACE_MS: Final[int] = 5000  # Kombirolle: so lange nach Lauf-Ende zaehlt ein Druck noch als Zieleinlauf
 CLOCK_OFFSET_MIN_MS: Final[int] = 250
+CLOCK_OFFSET_WINDOW_COUNT: Final[int] = 6
+CLOCK_OFFSET_MIN_SAMPLES: Final[int] = 3
+CLOCK_OFFSET_RISE_FACTOR: Final[float] = 0.1
 CLOCK_SYNC_SAMPLE_COUNT: Final[int] = 3
 CLOCK_SYNC_SAMPLE_WINDOW_MS: Final[int] = 15_000
 CLOCK_SYNC_STABLE_SPAN_MS: Final[int] = 100
@@ -799,6 +802,10 @@ def _archive_competition(st: State, name: str) -> str:
         "vitals": {
             str(t["mac"]): vitals_history.history(redis_store, str(t["mac"]), since) for t in tasters if t["mac"]
         },
+        "clock_offsets": {
+            str(t["mac"]): vitals_history.clock_offset_history(redis_store, str(t["mac"]), since)
+            for t in tasters if t["mac"]
+        },
         "pi": {n: vitals_history.history_pi(redis_store, n, since) for n in ("Koffer-Pi", "Bad-Pi", "Pi")},
         "charger": vitals_history.history_charger(redis_store, since),
         "charger_slots": vitals_history.history_charger_slots(redis_store, since),
@@ -943,6 +950,31 @@ def _clock_sync_status(st: State, now: int) -> dict[str, Any]:
         "ready": True,
         "message": f"Zeitabgleich stabil: alle {len(macs)} zugeordneten Taster sind bereit. Start möglich.",
     }
+
+
+def _update_clock_offset(
+    st: State, mac: str, received_ts: int, clock_ms: int
+) -> tuple[int, int]:
+    """Schaetzt den Offset mit einem gleitenden Niedrigstwert, um WLAN-Spitzen auszufiltern."""
+    samples_by_mac = st.setdefault("clock_offset_samples", {})
+    samples = samples_by_mac.setdefault(mac, [])
+    measured_ms = received_ts - clock_ms
+    samples.append(measured_ms)
+    samples = samples[-CLOCK_OFFSET_WINDOW_COUNT:]
+    samples_by_mac[mac] = samples
+
+    offsets = st.setdefault("clock_offsets", {})
+    if len(samples) < CLOCK_OFFSET_MIN_SAMPLES:
+        return measured_ms, int(offsets.get(mac, 0))
+
+    estimate = min(samples)
+    previous = offsets.get(mac)
+    if previous is None or estimate < int(previous):
+        applied_ms = estimate
+    else:
+        applied_ms = int(int(previous) + (estimate - int(previous)) * CLOCK_OFFSET_RISE_FACTOR)
+    offsets[mac] = applied_ms
+    return measured_ms, applied_ms
 
 
 def _taster_with_vitals(taster: Taster, vitals: dict[str, Vital]) -> dict[str, Any]:
@@ -1189,19 +1221,26 @@ def api_post_vitals():
     # sofort uebernehmen (geringste Latenz), nach oben nur langsam (Netzwerkjitter).
     clock_ms = payload.get("clock_ms")
     sync_samples = st.setdefault("clock_sync_samples", {})
+    clock_sample = None
     if not continuing:
         sync_samples.pop(mac, None)
+        st.setdefault("clock_offset_samples", {}).pop(mac, None)
+        st.setdefault("clock_offsets", {}).pop(mac, None)
     if isinstance(clock_ms, (int, float)) and clock_ms > 1_700_000_000_000:
-        offsets = st.setdefault("clock_offsets", {})
-        new_off = received_ts - int(clock_ms)
-        old = offsets.get(mac)
-        offsets[mac] = new_off if old is None or new_off < old else int(old + (new_off - old) * 0.1)
+        measured_ms, applied_ms = _update_clock_offset(st, mac, received_ts, int(clock_ms))
+        clock_sample = (measured_ms, applied_ms)
         samples = sync_samples.setdefault(mac, [])
-        samples.append({"ts": received_ts, "offset_ms": new_off})
+        samples.append({"ts": received_ts, "offset_ms": measured_ms})
         sync_samples[mac] = samples[-CLOCK_SYNC_SAMPLE_COUNT:]
     else:
         sync_samples.pop(mac, None)
+        st.setdefault("clock_offset_samples", {}).pop(mac, None)
+        st.setdefault("clock_offsets", {}).pop(mac, None)
     save_state(st)
+    if clock_sample is not None:
+        vitals_history.add_clock_offset(
+            redis_store, str(mac), received_ts, clock_sample[0], clock_sample[1]
+        )
     vitals_history.add(redis_store, str(mac), new_vital["ts"], dict(new_vital))
     known_taster = next((t for t in st["tasters"] if t.get("mac") == mac), None)
     if known_taster:
@@ -1620,6 +1659,23 @@ def api_vitals_history():
     return jsonify({"mac": mac, "fields": list(vitals_history.FIELDS),
                     "points": _thin(vitals_history.history(redis_store, mac, since)),
                     "starts": vitals_history.starts(redis_store, since)})
+
+
+@app.get("/api/clock-offset/history")
+def api_clock_offset_history():
+    """Gemessene und angewandte Taster-Uhrabweichung der letzten Stunden."""
+    mac = request.args.get("mac", "")
+    hours = min(
+        max(request.args.get("hours", default=KEEP_HOURS_DEFAULT, type=float), 0.1),
+        vitals_history.KEEP_HOURS,
+    )
+    since = now_ms() - int(hours * 3600 * 1000)
+    return jsonify(
+        {
+            "mac": mac,
+            "points": _thin(vitals_history.clock_offset_history(redis_store, mac, since)),
+        }
+    )
 
 
 @app.get("/api/vitals/pi")
