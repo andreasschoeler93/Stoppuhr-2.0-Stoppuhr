@@ -74,10 +74,17 @@ class SanitizeTests(unittest.TestCase):
     def test_current_requires_valid_sensor_and_unsaturated_value(self):
         s = ladekoffer.sanitize(payload(current_a=0.42, current_ok=True, current_saturated=False))
         self.assertEqual(s["current_a"], 0.42)
+        s = ladekoffer.sanitize(payload(current_a=10.0, current_ok=True, current_saturated=False))
+        self.assertEqual(s["current_a"], 10.0)
+        for current_a in (-40.96, 40.96):
+            s = ladekoffer.sanitize(
+                payload(current_a=current_a, current_ok=True, current_saturated=False)
+            )
+            self.assertEqual(s["current_a"], current_a)
         for update in (
             {"current_a": 0.42, "current_ok": False, "current_saturated": False},
             {"current_a": 0.42, "current_ok": True, "current_saturated": True},
-            {"current_a": 1.0, "current_ok": True, "current_saturated": False},
+            {"current_a": 40.97, "current_ok": True, "current_saturated": False},
             {"current_a": 0.42, "current_ok": True},
         ):
             self.assertIsNone(ladekoffer.sanitize(payload(**update))["current_a"])
@@ -186,10 +193,10 @@ class EndpointTests(unittest.TestCase):
 
     def test_current_roundtrip_and_overrange(self):
         stopwatch.app.config["AUTH_DISABLED"] = True
-        self.client.post("/api/charger", json=payload(current_a=0.25, current_ok=True, current_saturated=False))
+        self.client.post("/api/charger", json=payload(current_a=10.0, current_ok=True, current_saturated=False))
         status = self.client.get("/api/charger").get_json()["status"]
-        self.assertEqual(status["current_a"], 0.25)
-        self.assertEqual(vitals_history.history_charger(self.redis)[-1][-1], 0.25)
+        self.assertEqual(status["current_a"], 10.0)
+        self.assertEqual(vitals_history.history_charger(self.redis)[-1][-1], 10.0)
         self.client.post("/api/charger", json=payload(current_a=0.819, current_ok=True, current_saturated=True))
         body = self.client.get("/api/charger").get_json()
         self.assertIsNone(body["status"]["current_a"])

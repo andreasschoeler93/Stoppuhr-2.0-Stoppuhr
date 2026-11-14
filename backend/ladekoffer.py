@@ -7,6 +7,9 @@ from typing import Any, Final, Optional
 
 KEY: Final[str] = "CHARGER_STATUS"
 SLOT_COUNT: Final[int] = 10
+# INA226 range with the R002 shunt used by charger firmware v0.7.26.
+CURRENT_MIN_A: Final[float] = -40.96
+CURRENT_MAX_A: Final[float] = 40.96
 # Die Platine sendet alle 5 s; danach gilt sie als offline
 OFFLINE_AFTER_MS: Final[int] = 30_000
 # Die Meldung "Ladevorgang beendet" bleibt so lange stehen
@@ -62,7 +65,7 @@ def sanitize(payload: Any) -> Optional[dict[str, Any]]:
         "rssi": _int(payload.get("rssi"), -150, 0),
         "temp": _num(payload.get("temp"), -50, 150),
         "humidity": _num(payload.get("humidity"), 0, 100),
-        "current_a": _num(payload.get("current_a"), -0.8192, 0.8192)
+        "current_a": _num(payload.get("current_a"), CURRENT_MIN_A, CURRENT_MAX_A)
         if payload.get("current_ok") is True and payload.get("current_saturated") is False else None,
         "current_ok": payload.get("current_ok") if isinstance(payload.get("current_ok"), bool) else None,
         "current_saturated": payload.get("current_saturated") is True,

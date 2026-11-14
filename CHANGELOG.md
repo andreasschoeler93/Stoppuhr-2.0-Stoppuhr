@@ -5,6 +5,7 @@ Jede Version ist als Git-Tag `vX.Y.Z` markiert und kann in der Weboberfläche un
 
 | Version | Datum | Änderung |
 |---|---|---|
+| v0.41.18 | 2026-11-14 | Ladekoffer-Gesamtstrom: Werte von Koffer-Firmware v0.7.26 mit R002-Shunt werden bis ±40,96 A angenommen, statt am alten R100-Limit von ±0,8192 A verworfen zu werden. Die Anzeige nennt den neuen Messbereich; kein Überstromschutz. |
 | v0.41.17 | 2026-11-14 | Tastendrücke werden nicht mehr mit einer einseitig aus Vitalmeldungen geschätzten WLAN-Zeit korrigiert. Die Startbereitschaft prüft den tatsächlichen SNTP-Synchronisationsstatus der Taster; das Diagnose-Diagramm kennzeichnet die enthaltene WLAN-Laufzeit. Erfordert Taster-Firmware ab v0.19.5. |
 | v0.41.16 | 2026-11-14 | Offset-Korrektur nutzt einen gleitenden Niedrigstwert gegen WLAN-Verzögerungsspitzen. Vitaldaten-Diagramm zeigt gemessenen Uhrenversatz und angewandte Korrektur, auch in Archiven. |
 | v0.41.15 | 2026-11-14 | Stoppuhr-Seite zeigt, sobald die Zeitmeldungen aller zugeordneten Taster stabil und die Pi-Korrektur angeglichen ist. |

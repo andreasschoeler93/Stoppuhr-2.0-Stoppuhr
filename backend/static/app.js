@@ -582,7 +582,7 @@ function chargerStatusHtml() {
   return `<div class="mt-3"><strong class="small">Ladekoffer</strong> <span class="badge ${cls}">${label.replace("Ladekoffer: ", "")}</span>
     <div class="table-responsive mt-1"><table class="table table-sm align-middle mb-0"><thead><tr><th>Platz</th>${head}</tr></thead><tbody>${body}</tbody></table></div>
     <div class="small text-muted mt-1">${info}</div>
-    <div class="small mt-1">Gesamtstrom: <strong>${current}</strong> · R100: Messbereich etwa ±0,82 A. Keine Überstromabschaltung oder Überwachung von 8,5/9,5 A.</div>
+    <div class="small mt-1">Gesamtstrom: <strong>${current}</strong> · Koffer v0.7.26 mit R002: Messbereich etwa ±40,96 A. Keine Überstromabschaltung oder Überwachung von 8,5/9,5 A.</div>
     <a class="btn btn-sm btn-outline-secondary mt-2" href="/api/device-logs/charger" download>Logs herunterladen</a>
     ${msgs}${chargerVoltageChartHtml()}${chargerCurrentChartHtml()}</div>`;
 }
