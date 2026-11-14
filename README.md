@@ -1,4 +1,4 @@
-# Stoppuhr – Pi-Software (v0.41.18)
+# Stoppuhr – Pi-Software (v0.41.19)
 
 Webbasierte Wettkampf-Stoppuhr: ESP32-Taster messen die Zeit, der Raspberry Pi sammelt, wertet aus und
 liefert die Ergebnisse an JAuswertung. Die Taster-Firmware liegt im Repository `Taster`.
@@ -13,7 +13,7 @@ Versionsverlauf: [CHANGELOG.md](CHANGELOG.md). Zwei-Pi-Betrieb (Koffer und Bad):
 - Startkarten-Import (manuell), dynamische Bahnanzahl, Drag & Drop der Taster auf Bahnen und Starter
 - Start, Stopp, automatisch nächster Lauf, Abbruch und Wiederholung eines Laufs; Wettkampf beenden wahlweise mit oder ohne Taster-Abschaltung
 - Der Zeitabgleich der zugeordneten Taster wird vor dem Start auf der Stoppuhr-Seite angezeigt. Grün bedeutet, dass jeder Taster seit seiner letzten WLAN-Verbindung eine SNTP-Synchronisierung gemeldet hat, die höchstens 60 Sekunden zurückliegt (Taster-Firmware ab v0.19.5). Das ist eine Bereitschaftsprüfung, keine Garantie für 5-ms-Genauigkeit; WLAN-SNTP kann diese Genauigkeit nicht pauschal garantieren.
-- Vitaldaten → „Taster-Zeitstempel minus Pi-Empfangszeit“ zeigt eine Einweg-Diagnosemessung. Sie enthält WLAN-Laufzeit und ist kein reiner Uhrenfehler; der Pi wendet sie nicht auf Wettkampfzeiten an. Tastendrücke verwenden direkt den beim Druck erfassten SNTP-Zeitstempel des Tasters.
+- Tastendrücke verwenden direkt den beim Druck erfassten SNTP-Zeitstempel des Tasters. Die frühere Einweg-Diagnose „Taster-Zeitstempel minus Pi-Empfangszeit“ wird nicht mehr in den Vitaldaten angezeigt.
 - Taster tauschen über „Bereitschaft“, Vitaldaten mit darunterliegendem Systemstatus, Zwei-Pi-Betrieb mit Ausfallübernahme
 - Anmeldung für die Oberfläche, WLAN-Daten und Updates (Pi und Taster) aus der Oberfläche
 - Einzelne Taster ausschalten (ab v0.38.0): Einstellungen → „Taster einzeln schlafen schicken“. Buchstabe wählen und im Bestätigungs-Popup erneut eingeben (`POST /api/taster/sleep`). Nur online-Taster; Taster mit Aufgabe werden während eines Laufs abgelehnt.

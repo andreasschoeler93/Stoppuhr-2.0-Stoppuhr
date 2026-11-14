@@ -38,14 +38,8 @@ const PI_CHARTS = [
   { id: "pi1", idx: 1, idx2: 2, title: "Pi CPU-Temperatur (durchgezogen) und CPU-Last (gestrichelt)", unit: "°C / %", pi: true, min: 0, max: 100,
     limits: [["pi", "cpu_temp"], ["pi", "cpu_percent"]] },
 ];
-const CLOCK_OFFSET_CHART = {
-  id: "clock-offset", idx: 1,
-  title: "Pi-Empfangszeit minus Taster-Zeitstempel",
-  unit: "ms", decimals: 0, zeroLine: true, emptyText: "Noch keine Zeitmessungen vorhanden.",
-};
 const PI_COLORS = { "Koffer-Pi": "#0d6efd", "Bad-Pi": "#fd7e14", "Pi": "#0d6efd" };
 let vitalsData = null;
-let clockOffsetSeries = [];
 let chargerSeries = [];
 let chargerVoltageSeries = [];
 let chargerCurrentSeries = [];
@@ -95,11 +89,6 @@ function buildArchiveVitals(a) {
   const series = list.map((t, i) => ({
     label: `Taster ${t.letter || "?"}`, color: TASTER_COLORS[i % TASTER_COLORS.length], points: (a.vitals || {})[t.mac] || [],
   }));
-  clockOffsetSeries = list.map((t, i) => ({
-    label: `Taster ${t.letter || "?"}`,
-    color: TASTER_COLORS[i % TASTER_COLORS.length],
-    points: (a.clock_offsets || {})[t.mac] || [],
-  }));
   const piSeries = Object.entries(a.pi || {}).map(([n, pts]) => ({ label: n, color: PI_COLORS[n] || "#0d6efd", points: pts }));
   chargerSeries = a.charger?.length
     ? [{ label: "Ladekoffer", color: "#20a4a8", points: a.charger.map(([ts, temp, humidity]) => [ts, null, null, temp, humidity, null]) }]
@@ -147,15 +136,6 @@ async function refreshVitals() {
     const d = await apiGet(`/api/vitals/history?mac=${encodeURIComponent(t.mac)}&hours=${fetchH}`).catch(() => ({ points: [] }));
     if (d.starts && d.starts.length) starts = d.starts;
     return { label: `Taster ${t.letter || "?"}${t.old ? " (früher)" : ""}`, color: TASTER_COLORS[i % TASTER_COLORS.length], points: d.points || [] };
-  }));
-  clockOffsetSeries = await Promise.all(plotted.map(async (t, i) => {
-    const d = await apiGet(`/api/clock-offset/history?mac=${encodeURIComponent(t.mac)}&hours=${fetchH}`)
-      .catch(() => ({ points: [] }));
-    return {
-      label: `Taster ${t.letter || "?"}${t.old ? " (früher)" : ""}`,
-      color: TASTER_COLORS[i % TASTER_COLORS.length],
-      points: d.points || [],
-    };
   }));
   const pi = await apiGet(`/api/vitals/pi?hours=${fetchH}`).catch(() => ({ nodes: [] }));
   if (!starts.length && pi.starts) starts = pi.starts;
@@ -616,26 +596,10 @@ function drawVitals() {
     + (chargerSeries.length ? ' <span class="text-muted me-2">|</span>' + chargerSeries.map(legend).join("") : "");
   if (!box.children.length) {
     box.innerHTML = VITAL_CHARTS.concat(PI_CHARTS).map(c => `<div class="col-lg-6"><div class="card"><div class="card-body p-2">
-      <strong class="small">${c.title} (${c.unit})</strong>
-      <canvas id="vc-${c.id || c.idx}" style="width:100%;height:180px"></canvas></div></div></div>`).join("") +
-      `<div class="col-12"><div class="card"><div class="card-body p-2">
-      <strong class="small">${CLOCK_OFFSET_CHART.title} (${CLOCK_OFFSET_CHART.unit})</strong>
-      <div class="small text-muted">Diese Einweg-Messung enthält WLAN-Laufzeit und zeigt keinen reinen Uhrenfehler. Sie wird nicht zur Korrektur von Wettkampfzeiten verwendet.</div>
-    <div id="clockOffsetLegend" class="small mt-1"></div>
-    <canvas id="vc-${CLOCK_OFFSET_CHART.id}" style="width:100%;height:180px"></canvas></div></div></div>` +
+    <strong class="small">${c.title} (${c.unit})</strong>
+    <canvas id="vc-${c.id || c.idx}" style="width:100%;height:180px"></canvas></div></div></div>`).join("") +
     `<div class="col-12"><div class="card h-100"><div class="card-body p-2">
     <strong class="small">Zustand der Taster und Pis</strong><div id="vitalsStatus" class="mt-1"></div></div></div></div>`;
-  }
-  const clockLegend = byId("clockOffsetLegend");
-  clockLegend.innerHTML = clockOffsetSeries.length
-    ? clockOffsetSeries.map(legend).join("")
-    : '<span class="text-muted">Keine Taster-Zeitdaten im gewählten Zeitraum.</span>';
-  if (!clockLegend.dataset.bound) {
-    clockLegend.dataset.bound = "1";
-    clockLegend.addEventListener("click", e => {
-    const el = e.target.closest("[data-series]");
-    if (el) toggleSeries(el.dataset.series);
-    });
   }
   byId("vitalsStatus").innerHTML = vitalsData.archive
     ? '<span class="text-muted small">Archivierter Wettkampf – der aktuelle Zustand wird nicht angezeigt.</span>' + chargerVoltageChartHtml() + chargerCurrentChartHtml()
@@ -659,10 +623,6 @@ function drawVitals() {
   }
   VITAL_CHARTS.forEach(c => drawVitalChart(c, s));
   PI_CHARTS.forEach(c => drawVitalChart(c, vitalsData.piSeries));
-  drawVitalChart({
-    ...CLOCK_OFFSET_CHART,
-    emptyText: vitalsData.archive ? "Für archivierte Wettkämpfe nicht verfügbar." : CLOCK_OFFSET_CHART.emptyText,
-  }, clockOffsetSeries);
 }
 
 function drawVitalChart(c, series) {
@@ -1383,6 +1343,14 @@ function updateRunSelect(runs) {
     currentRun = r[0];
     sel.value = r[0];
   }
+  updateActiveRunOption();
+}
+
+function updateActiveRunOption() {
+  const activeRun = String(runStatus.current_run ?? "");
+  [...byId("laufSelect").options].forEach(option => {
+    option.style.fontWeight = option.value === activeRun ? "bold" : "";
+  });
 }
 
 // -----------------------------
@@ -1644,6 +1612,7 @@ async function loadRunStatus() {
   // Anzeige folgt dem Lauf des Servers, wenn dieser wechselt
   const serverRun = String(runStatus.current_run ?? "");
   const serverKey = String(runStatus.current_key ?? "");
+  updateActiveRunOption();
   if (lastServerKey !== null && serverKey !== lastServerKey && serverRun) {
     const sel = byId("laufSelect");
     if ([...sel.options].some(o => o.value === serverRun)) {
