@@ -187,12 +187,10 @@ class DeviceLogTests(unittest.TestCase):
             "slots": [{"n": 1, "charging": False, "fault": False, "vbat": 4.1}],
             "logs": [{"ms": 2500, "text": "TRIG_ALL 15 s held"}],
         }
-        with patch.object(stopwatch, "load_state", return_value=state), \
-             patch.object(stopwatch.ladekoffer, "save"), \
-             patch.object(stopwatch.vitals_history, "add_charger"), \
-             patch.object(stopwatch.vitals_history, "add_charger_slot_backfill"), \
-             patch.object(stopwatch.vitals_history, "add_charger_slots"), \
-             patch.object(stopwatch.charger_firmware, "offer", return_value=None):
+        with         patch.object(stopwatch, "load_state", return_value=state), \
+        patch.object(stopwatch.ladekoffer, "save"), \
+        patch.object(stopwatch.vitals_history, "add_charger"), \
+        patch.object(stopwatch.charger_firmware, "offer", return_value=None):
             response = self.client.post("/api/charger", json=payload)
         self.assertEqual(response.status_code, 200)
         snapshot = device_logs.load_charger_snapshot(self.redis)

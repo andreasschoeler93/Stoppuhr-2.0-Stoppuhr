@@ -1,3 +1,4 @@
+import json
 import time
 import unittest
 from unittest.mock import patch
@@ -186,10 +187,24 @@ class EndpointTests(unittest.TestCase):
             vitals_history.history_charger(self.redis),
             [[body["status"]["ts"], 24.5, 40.0, None]],
         )
-        history = vitals_history.history_charger_slots(self.redis)
-        self.assertEqual(len(history), 2)
-        self.assertEqual(history[0][1:], [3.8] * 10)
-        self.assertAlmostEqual(body["status"]["ts"] - history[0][0], 5000, delta=1000)
+        self.assertEqual(body["status"]["slots"][0]["vbat"], 4.15)
+        self.assertNotIn("CHARGER_SLOTS_HIST", self.redis.lists)
+
+    def test_vitals_pi_omits_unused_charger_slot_history(self):
+        stopwatch.app.config["AUTH_DISABLED"] = True
+        cluster = {"self": {"kind": "koffer"}, "peer": {"configured": False}}
+        with patch.object(stopwatch.node_info, "cluster_status", return_value=cluster):
+            body = self.client.get("/api/vitals/pi").get_json()
+        self.assertNotIn("charger_slots", body)
+
+    def test_archive_response_omits_legacy_charger_slot_history(self):
+        stopwatch.app.config["AUTH_DISABLED"] = True
+        self.redis.set(
+            "ARCHIVE:legacy",
+            json.dumps({"id": "legacy", "charger_slots": [[1, *([3.8] * 10)]]}),
+        )
+        body = self.client.get("/api/archive/legacy").get_json()
+        self.assertNotIn("charger_slots", body)
 
     def test_current_roundtrip_and_overrange(self):
         stopwatch.app.config["AUTH_DISABLED"] = True

@@ -1,6 +1,6 @@
 # ----------------------------------------
 # Stoppuhr Webserver
-# Version: v0.41.20
+# Version: v0.41.21
 # Status: stable-beta
 # ----------------------------------------
 
@@ -44,7 +44,7 @@ import node_names
 from xml_writer import create_xml_heats
 
 
-APP_VERSION: Final[str] = "0.41.20"
+APP_VERSION: Final[str] = "0.41.21"
 DEFAULT_PORT: Final[int] = 1999  # Since JAuswertung expected this port
 EXIT_ERROR: Final[int] = 1
 STATE_KEY: Final[str] = "STATE"
@@ -456,13 +456,22 @@ _UNLOCKED_PREFIXES: Final[tuple[str, ...]] = (
 
 
 @app.before_request
-def _state_lock_enter() -> None:
+def _state_lock_enter() -> Optional[ResponseReturnValue]:
     path = request.path
     # Reine Lese-Abfragen (Browser, Taster-Displays) blockieren nicht; sie schreiben den Zustand nicht
     if request.method in ("GET", "HEAD") and path != "/api/network-status":
         return
     if path.startswith("/api/") and not path.startswith(_UNLOCKED_PREFIXES):
-        g.state_locked = _STATE_LOCK.acquire(timeout=_STATE_LOCK_TIMEOUT_S)
+        if not _STATE_LOCK.acquire(timeout=_STATE_LOCK_TIMEOUT_S):
+            logger.warning("API-Anfrage wegen belegter Zustandssperre abgelehnt: %s %s", request.method, path)
+            response = jsonify({
+                "ok": False,
+                "error": "state_busy",
+                "message": "Der Wettkampfzustand ist gerade belegt. Bitte erneut versuchen.",
+            })
+            response.headers["Retry-After"] = "1"
+            return response, 503
+        g.state_locked = True
 
 
 @app.teardown_request
@@ -803,7 +812,6 @@ def _archive_competition(st: State, name: str) -> str:
         },
         "pi": {n: vitals_history.history_pi(redis_store, n, since) for n in ("Koffer-Pi", "Bad-Pi", "Pi")},
         "charger": vitals_history.history_charger(redis_store, since),
-        "charger_slots": vitals_history.history_charger_slots(redis_store, since),
         "starts": vitals_history.starts(redis_store, since),
         "raw": {
             key: st.get(key)
@@ -829,6 +837,7 @@ def api_archive_get(cid: str) -> ResponseReturnValue:
     if data is None:
         return jsonify({"ok": False, "error": "Wettkampf nicht gefunden."}), 404
     data.pop("raw", None)  # Rohdaten bleiben im Archiv, die Oberflaeche braucht sie nicht
+    data.pop("charger_slots", None)  # Alte Archive enthalten nicht mehr angezeigte Ladeplatz-Verlaeufe
     return jsonify(data)
 
 
@@ -1212,8 +1221,6 @@ def api_post_charger():
         )
     ladekoffer.save(redis_store, status)
     vitals_history.add_charger(redis_store, status["ts"], status)
-    vitals_history.add_charger_slot_backfill(redis_store, status["ts"], payload.get("voltage_history"))
-    vitals_history.add_charger_slots(redis_store, status["ts"], status)
     try:
         st = load_state()
         reply: dict[str, Any] = {"ok": True, "wake": _wake_config(st), "beep": _beep_config(st)}
@@ -1634,8 +1641,7 @@ def api_vitals_pi():
         })
     return jsonify({"fields": list(vitals_history.PI_FIELDS), "nodes": nodes,
                     "starts": vitals_history.starts(redis_store, since),
-                    "charger": vitals_history.history_charger(redis_store, since),
-                    "charger_slots": vitals_history.history_charger_slots(redis_store, since)})
+                    "charger": vitals_history.history_charger(redis_store, since)})
 
 
 def _pi_name(node: dict[str, Any]) -> str:

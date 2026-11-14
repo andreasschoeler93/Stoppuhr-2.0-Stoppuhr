@@ -15,10 +15,6 @@ PI_FIELDS: Final[tuple[str, ...]] = ("cpu_temp", "cpu_percent", "mem_percent")
 CHARGER_KEY: Final[str] = "CHARGER_HIST"
 CHARGER_FIELDS: Final[tuple[str, ...]] = ("temp", "humidity", "current_a")
 CHARGER_MAX_POINTS: Final[int] = KEEP_HOURS * 720 + 120
-CHARGER_SLOTS_KEY: Final[str] = "CHARGER_SLOTS_HIST"
-CHARGER_SLOT_COUNT: Final[int] = 10
-CHARGER_BACKFILL_MAX_AGE_MS: Final[int] = 2 * 60 * 60 * 1000
-CHARGER_BACKFILL_BATCH_SIZE: Final[int] = 60
 CLOCK_OFFSET_PREFIX: Final[str] = "CLOCK_OFFSET_HIST:"
 CLOCK_OFFSET_MAX_POINTS: Final[int] = KEEP_HOURS * 360 + 60
 
@@ -177,62 +173,6 @@ def history_charger(r: Any, since_ms: int = 0) -> list[list[Any]]:
             continue
         if isinstance(point, list) and len(point) in (3, 4) and point[0] >= since_ms:
             points.append(point + [None] if len(point) == 3 else point)
-    return points
-
-
-def add_charger_slots(r: Any, ts_ms: int, status: dict[str, Any]) -> None:
-    """Haengt die Akkuspannung je Ladeplatz als [Zeit, Platz 1, ..., Platz 10] an."""
-    try:
-        slots = {slot["n"]: slot for slot in status.get("slots", [])}
-        if not slots:
-            return
-        point = [ts_ms] + [_num((slots.get(n) or {}).get("vbat")) for n in range(1, CHARGER_SLOT_COUNT + 1)]
-        pipe = r.pipeline()
-        pipe.rpush(CHARGER_SLOTS_KEY, json.dumps(point, separators=(",", ":")))
-        pipe.ltrim(CHARGER_SLOTS_KEY, -CHARGER_MAX_POINTS, -1)
-        pipe.execute()
-    except Exception:  # noqa: BLE001
-        pass
-
-
-def add_charger_slot_backfill(r: Any, received_ms: int, samples: Any) -> None:
-    """Speichert gueltige gepufferte Messungen anhand ihres Alters beim Empfang."""
-    if not isinstance(samples, list):
-        return
-    for sample in samples[:CHARGER_BACKFILL_BATCH_SIZE]:
-        if not isinstance(sample, list) or len(sample) != 2:
-            continue
-        age_ms, values = sample
-        if (isinstance(age_ms, bool) or not isinstance(age_ms, int)
-                or not 0 <= age_ms <= CHARGER_BACKFILL_MAX_AGE_MS
-                or not isinstance(values, list) or len(values) != CHARGER_SLOT_COUNT):
-            continue
-        slots = []
-        valid = True
-        for n, value in enumerate(values, 1):
-            if value is not None and (
-                isinstance(value, bool) or not isinstance(value, (int, float)) or not 0 <= value <= 10
-            ):
-                valid = False
-                break
-            slots.append({"n": n, "vbat": value})
-        if valid:
-            add_charger_slots(r, received_ms - age_ms, {"slots": slots})
-
-
-def history_charger_slots(r: Any, since_ms: int = 0) -> list[list[Any]]:
-    try:
-        raw = r.lrange(CHARGER_SLOTS_KEY, 0, -1)
-    except Exception:  # noqa: BLE001
-        return []
-    points: list[list[Any]] = []
-    for item in raw:
-        try:
-            point = json.loads(item)
-        except ValueError:
-            continue
-        if isinstance(point, list) and len(point) == CHARGER_SLOT_COUNT + 1 and point[0] >= since_ms:
-            points.append(point)
     return points
 
 

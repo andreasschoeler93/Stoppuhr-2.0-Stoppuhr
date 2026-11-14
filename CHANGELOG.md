@@ -5,6 +5,7 @@ Jede Version ist als Git-Tag `vX.Y.Z` markiert und kann in der Weboberfläche un
 
 | Version | Datum | Änderung |
 |---|---|---|
+| v0.41.21 | 2026-11-14 | Ladeplatz-Spannungsverlauf entfernt: unnötige Messwertpufferung, Verarbeitung und Übertragung entfallen; aktuelle Spannungen bleiben in der Ladeplatz-Statusanzeige sichtbar. Schreibende API-Anfragen werden bei belegter Zustandssperre mit 503 abgelehnt, statt ungeschützt fortzufahren. |
 | v0.41.20 | 2026-11-14 | Stoppuhr und Tasteranzeigen: Startkartennamen werden mit Vorname vor Nachname dargestellt. |
 | v0.41.19 | 2026-11-14 | Vitaldaten: Einweg-Diagramm „Pi-Empfangszeit minus Taster-Zeitstempel“ entfernt. Im Lauf-Dropdown wird der aktuell aktive Server-Lauf fett markiert. |
 | v0.41.18 | 2026-11-14 | Ladekoffer-Gesamtstrom: Werte von Koffer-Firmware v0.7.26 mit R002-Shunt werden bis ±40,96 A angenommen, statt am alten R100-Limit von ±0,8192 A verworfen zu werden. Die Anzeige nennt den neuen Messbereich; kein Überstromschutz. |
