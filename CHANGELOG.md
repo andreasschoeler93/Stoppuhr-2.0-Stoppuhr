@@ -5,6 +5,7 @@ Jede Version ist als Git-Tag `vX.Y.Z` markiert und kann in der Weboberfläche un
 
 | Version | Datum | Änderung |
 |---|---|---|
+| v0.41.15 | 2026-11-14 | Stoppuhr-Seite zeigt, sobald die Zeitmeldungen aller zugeordneten Taster stabil und die Pi-Korrektur angeglichen ist. |
 | v0.41.14 | 2026-11-14 | Wettkampf ohne Taster-Abschaltung beenden: Taster, Buchstaben und Zuordnungen bleiben erhalten. |
 | v0.41.13 | 2026-11-14 | Wettkampf kann beendet werden, ohne die Taster auszuschalten. |
 | v0.41.12 | 2026-11-12 | Vorzeitige Bahndrücke mit leerem Zeit-Eintrag zählen nicht mehr als abgeschlossene Bahnen; der Lauf bleibt bis zu gültigen Stopps aktiv. |

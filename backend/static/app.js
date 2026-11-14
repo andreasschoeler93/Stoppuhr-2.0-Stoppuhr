@@ -1581,6 +1581,11 @@ let lastServerKey = null;
 async function loadRunStatus() {
   const t0 = Date.now();
   runStatus = await apiGet("/api/run-status");
+  const clockSync = runStatus.clock_sync || {};
+  const clockSyncNotice = byId("clockSyncNotice");
+  clockSyncNotice.classList.toggle("alert-success", !!clockSync.ready);
+  clockSyncNotice.classList.toggle("alert-warning", !clockSync.ready);
+  clockSyncNotice.textContent = clockSync.message || "Zeitabgleich konnte nicht geprüft werden.";
   if (runStatus.server_now) serverOffsetMs = runStatus.server_now - (t0 + Date.now()) / 2;
   let label = "Server-Lauf: " + (runStatus.current_label ?? "–");
   if (runStatus.start_lockout_remaining_s > 0) {

@@ -1,6 +1,6 @@
 # ----------------------------------------
 # Stoppuhr Webserver
-# Version: v0.41.14
+# Version: v0.41.15
 # Status: stable-beta
 # ----------------------------------------
 
@@ -44,7 +44,7 @@ import node_names
 from xml_writer import create_xml_heats
 
 
-APP_VERSION: Final[str] = "0.41.14"
+APP_VERSION: Final[str] = "0.41.15"
 DEFAULT_PORT: Final[int] = 1999  # Since JAuswertung expected this port
 EXIT_ERROR: Final[int] = 1
 STATE_KEY: Final[str] = "STATE"
@@ -53,6 +53,10 @@ FINISH_KEY: Final[str] = finish_module.FINISH_KEY
 STARTER_STOP_MIN_MS: Final[int] = 1500  # Zweiter Starter-Druck davor gilt als Prellen
 STARTER_FINISH_GRACE_MS: Final[int] = 5000  # Kombirolle: so lange nach Lauf-Ende zaehlt ein Druck noch als Zieleinlauf
 CLOCK_OFFSET_MIN_MS: Final[int] = 250
+CLOCK_SYNC_SAMPLE_COUNT: Final[int] = 3
+CLOCK_SYNC_SAMPLE_WINDOW_MS: Final[int] = 15_000
+CLOCK_SYNC_STABLE_SPAN_MS: Final[int] = 100
+CLOCK_SYNC_MAX_CORRECTION_ERROR_MS: Final[int] = 100
 KEEP_HOURS_DEFAULT: Final[float] = 6.0
 MANUAL_WAKE_TIMEOUT_MS: Final[int] = 60_000
 ALL_WAKE_TIMEOUT_MS: Final[int] = 360_000
@@ -872,6 +876,75 @@ def api_get_assignments():
 TASTER_ONLINE_TIMEOUT_MS: Final[int] = 30_000
 
 
+def _clock_sync_status(st: State, now: int) -> dict[str, Any]:
+    mapping = (st.get("assignments") or {}).get("mapping") or {}
+    macs = sorted({str(mac) for mac in mapping.values() if mac})
+    if not macs:
+        return {
+            "ready": False,
+            "message": "Noch keine Taster zugeordnet. Bitte zuerst Starter- und Bahntaster zuordnen.",
+        }
+
+    tasters_by_mac = {str(t.get("mac")): t for t in st.get("tasters", [])}
+    vitals = st.get("vitals") or {}
+    samples_by_mac = st.get("clock_sync_samples") or {}
+    offsets = st.get("clock_offsets") or {}
+    waiting: list[str] = []
+    for mac in macs:
+        taster = tasters_by_mac.get(mac) or {}
+        letter = taster.get("letter") or mac[-4:]
+        vital = vitals.get(mac) or {}
+        if not vital.get("ts") or now - int(vital["ts"]) > TASTER_ONLINE_TIMEOUT_MS:
+            waiting.append(f"Taster {letter} ist offline")
+            continue
+
+        samples = samples_by_mac.get(mac)
+        recent: list[dict[str, int]] = []
+        if isinstance(samples, list):
+            for sample in samples:
+                if not isinstance(sample, dict):
+                    continue
+                try:
+                    sample_ts = int(sample["ts"])
+                    sample_offset = int(sample["offset_ms"])
+                except (KeyError, TypeError, ValueError):
+                    continue
+                if 0 <= now - sample_ts <= TASTER_ONLINE_TIMEOUT_MS:
+                    recent.append({"ts": sample_ts, "offset_ms": sample_offset})
+        recent.sort(key=lambda sample: sample["ts"])
+        recent = recent[-CLOCK_SYNC_SAMPLE_COUNT:]
+        if len(recent) < CLOCK_SYNC_SAMPLE_COUNT:
+            waiting.append(f"Taster {letter}: warte auf drei gültige Zeitmeldungen")
+            continue
+        if recent[-1]["ts"] - recent[0]["ts"] < CLOCK_SYNC_SAMPLE_WINDOW_MS:
+            waiting.append(f"Taster {letter}: Zeitmeldungen liegen noch zu dicht beieinander")
+            continue
+
+        sample_offsets = [sample["offset_ms"] for sample in recent]
+        if max(sample_offsets) - min(sample_offsets) > CLOCK_SYNC_STABLE_SPAN_MS:
+            waiting.append(f"Taster {letter}: Uhrabweichung ist noch nicht stabil")
+            continue
+
+        try:
+            correction = int(offsets[mac])
+        except (KeyError, TypeError, ValueError):
+            waiting.append(f"Taster {letter}: Zeitkorrektur wird noch ermittelt")
+            continue
+        if abs(correction - min(sample_offsets)) > CLOCK_SYNC_MAX_CORRECTION_ERROR_MS:
+            waiting.append(f"Taster {letter}: Zeitkorrektur gleicht sich noch an")
+
+    if waiting:
+        return {
+            "ready": False,
+            "message": "Zeitabgleich noch nicht bereit: " + "; ".join(waiting)
+            + ". Bitte warten, bis der Status grün ist.",
+        }
+    return {
+        "ready": True,
+        "message": f"Zeitabgleich stabil: alle {len(macs)} zugeordneten Taster sind bereit. Start möglich.",
+    }
+
+
 def _taster_with_vitals(taster: Taster, vitals: dict[str, Vital]) -> dict[str, Any]:
     """Taster-Eintrag um Vitaldaten und Online-Status (anhand des letzten Vitals-ts) ergaenzen."""
     v = vitals.get(taster.get("mac")) or {}
@@ -1092,12 +1165,13 @@ def api_post_vitals():
     mac = payload.get("mac")
     if not mac:
         return jsonify({"ok": False, "error": "missing mac"}), 400
+    received_ts = now_ms()
     new_vital: Vital = {
         "battery": payload.get("battery"),
         "temp": payload.get("temp"),
         "humidity": payload.get("humidity"),
         # Der Server-Zeitstempel zaehlt, die Uhr des Tasters ist beim Start evtl. nicht synchron
-        "ts": now_ms(),
+        "ts": received_ts,
         "vbat": payload.get("vbat"),
         "rssi": payload.get("rssi"),
         "fw": payload.get("fw"),
@@ -1114,11 +1188,19 @@ def api_post_vitals():
     # Uhrversatz Taster -> Server lernen (Server-Zeit minus Taster-Zeit); Sprung nach unten
     # sofort uebernehmen (geringste Latenz), nach oben nur langsam (Netzwerkjitter).
     clock_ms = payload.get("clock_ms")
+    sync_samples = st.setdefault("clock_sync_samples", {})
+    if not continuing:
+        sync_samples.pop(mac, None)
     if isinstance(clock_ms, (int, float)) and clock_ms > 1_700_000_000_000:
         offsets = st.setdefault("clock_offsets", {})
-        new_off = now_ms() - int(clock_ms)
+        new_off = received_ts - int(clock_ms)
         old = offsets.get(mac)
         offsets[mac] = new_off if old is None or new_off < old else int(old + (new_off - old) * 0.1)
+        samples = sync_samples.setdefault(mac, [])
+        samples.append({"ts": received_ts, "offset_ms": new_off})
+        sync_samples[mac] = samples[-CLOCK_SYNC_SAMPLE_COUNT:]
+    else:
+        sync_samples.pop(mac, None)
     save_state(st)
     vitals_history.add(redis_store, str(mac), new_vital["ts"], dict(new_vital))
     known_taster = next((t for t in st["tasters"] if t.get("mac") == mac), None)
@@ -2938,6 +3020,7 @@ def api_get_run_status():
             "start_lockout_remaining_s": lockout_remaining,
             "server_now": now_ms(),
             "next_run_in_s": next_in,
+            "clock_sync": _clock_sync_status(st, now_ms()),
             "runs": runs,
         }
     )
