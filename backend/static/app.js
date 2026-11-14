@@ -13,6 +13,16 @@ function escapeHtml(str) {
   }[m]));
 }
 
+function displayPersonName(value) {
+  const name = String(value ?? "").trim();
+  if (name.includes(",")) {
+    const [surname, ...givenNames] = name.split(",");
+    return `${givenNames.join(",").trim()} ${surname.trim()}`.trim();
+  }
+  const parts = name.split(/\s+/);
+  return parts.length > 1 ? `${parts.slice(1).join(" ")} ${parts[0]}` : name;
+}
+
 // -----------------------------
 // Global State (UI)
 // -----------------------------
@@ -1956,7 +1966,7 @@ function renderLanesTable() {
     const tr = document.createElement("tr");
     if (!r) tr.classList.add("lane-inactive");
 
-    const name = r ? (r["Name"] ?? r["name"] ?? "–") : "–";
+    const name = r ? displayPersonName(r["Name"] ?? r["name"] ?? "–") : "–";
     const startnr = r ? (r["Startnummer"] ?? r["startnummer"] ?? "–") : "–";
     const disz = r ? (r["Disziplin"] ?? r["disziplin"] ?? "–") : "–";
 

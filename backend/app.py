@@ -1,6 +1,6 @@
 # ----------------------------------------
 # Stoppuhr Webserver
-# Version: v0.41.19
+# Version: v0.41.20
 # Status: stable-beta
 # ----------------------------------------
 
@@ -44,7 +44,7 @@ import node_names
 from xml_writer import create_xml_heats
 
 
-APP_VERSION: Final[str] = "0.41.19"
+APP_VERSION: Final[str] = "0.41.20"
 DEFAULT_PORT: Final[int] = 1999  # Since JAuswertung expected this port
 EXIT_ERROR: Final[int] = 1
 STATE_KEY: Final[str] = "STATE"
@@ -2789,6 +2789,19 @@ def _display_text(text: Any, limit: int = 30) -> str:
     return s.replace('"', "").replace("\\", "").strip()[:limit]
 
 
+def _display_person_name(value: Any) -> str:
+    """Zeigt Startkartennamen (Nachname zuerst) auf Displays mit Vorname zuerst."""
+    name = unicodedata.normalize("NFC", str(value or "")).strip()
+    if "," in name:
+        surname, given_names = name.split(",", 1)
+        name = f"{given_names.strip()} {surname.strip()}"
+    else:
+        parts = name.split()
+        if len(parts) > 1:
+            name = " ".join((*parts[1:], parts[0]))
+    return _display_text(name)
+
+
 def _lane_time(presses: Optional[dict[str, Any]], lane: str) -> Optional[int]:
     """Gestoppte Zeit (ms) einer Bahn in einem Lauf, None wenn nicht gestoppt/nicht gestartet."""
     starter = (presses or {}).get(STARTER_KEY)
@@ -2936,7 +2949,7 @@ def api_get_display():
         out["state"] = "inactive"
         out["name"] = "frei"
     else:
-        out["name"] = _display_text(card.get("Name"))
+        out["name"] = _display_person_name(card.get("Name"))
         out["discipline"] = _display_text(card.get("Disziplin"))
         stopped = _lane_time(presses, str(lane))
         if stopped is not None:
@@ -2951,7 +2964,7 @@ def api_get_display():
                 (c for c in (st.get("startcards_per_run") or {}).get(str(previous_run), [])
                  if str(c.get("Bahn")) == str(lane)), None)
             out["last_ms"], out["last_run"], out["last_attempt"] = t, previous_run, previous_attempt
-            out["last_name"] = _display_text((prev_card or {}).get("Name"))
+            out["last_name"] = _display_person_name((prev_card or {}).get("Name"))
             break
     return jsonify(out)
 

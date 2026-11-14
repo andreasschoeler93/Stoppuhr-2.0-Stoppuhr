@@ -42,6 +42,16 @@ class PendingSwapTests(unittest.TestCase):
         self.assertNotIn("pending", resp.json)
         self.assertEqual(self.state["assignments"]["mapping"]["2"], "B")
 
+    def test_taster_display_formats_names_given_name_first(self):
+        card = self.state["startcards_per_run"]["1"][0]
+        card["Name"] = "Mustermann Max"
+        display = self.client.get("/api/display?mac=A").json
+        self.assertEqual(display["name"], "Max Mustermann")
+
+        card["Name"] = "Mustermann, Max Maria"
+        display = self.client.get("/api/display?mac=A").json
+        self.assertEqual(display["name"], "Max Maria Mustermann")
+
     def test_first_press_swaps_roles_when_no_run_is_running(self):
         self._assign()
         resp = self.client.post("/api/triggers", json={"mac": "B", "ts": 1})
