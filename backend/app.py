@@ -1,6 +1,6 @@
 # ----------------------------------------
 # Stoppuhr Webserver
-# Version: v0.41.22
+# Version: v0.41.23
 # Status: stable-beta
 # ----------------------------------------
 
@@ -16,37 +16,47 @@ import struct
 import threading
 import time
 import unicodedata
-import uuid
 import urllib.request
+import uuid
 from collections import defaultdict, deque
 from dataclasses import dataclass
 from typing import Any, Final, Optional, TypedDict
 
+import archive
+import auth
+import charger_firmware
+import device_logs
+import finish as finish_module
+import firmware_store
+import ladekoffer
+import limits as limits_module
+import node_info
+import node_names
+import pi_update
 import psutil
 import redis
+import vitals_history
+import wifi_config
 from flask import (
-    Flask, Response, abort, g, has_request_context, jsonify, redirect, render_template, request, send_file, session,
+    Flask,
+    Response,
+    abort,
+    g,
+    has_request_context,
+    jsonify,
+    redirect,
+    render_template,
+    request,
+    send_file,
+    session,
 )
 from flask.sessions import SecureCookieSessionInterface
 from flask.typing import ResponseReturnValue
 from werkzeug.exceptions import HTTPException
-import archive
-import auth
-import firmware_store
-import charger_firmware
-import device_logs
-import ladekoffer
-import limits as limits_module
-import node_info
-import pi_update
-import vitals_history
-import finish as finish_module
-import wifi_config
-import node_names
 from xml_writer import create_xml_heats
 
 
-APP_VERSION: Final[str] = "0.41.22"
+APP_VERSION: Final[str] = "0.41.23"
 DEFAULT_PORT: Final[int] = 1999  # Since JAuswertung expected this port
 EXIT_ERROR: Final[int] = 1
 STATE_KEY: Final[str] = "STATE"
@@ -71,6 +81,10 @@ redis_store = redis.Redis(
     socket_connect_timeout=1.0,
     socket_timeout=1.0,
 )
+_STATE_CHANGE_CONDITION = threading.Condition()
+_STATE_CHANGE_INSTANCE = uuid.uuid4().hex
+_STATE_CHANGE_ID = 0
+DISPLAY_LONG_POLL_MAX_MS: Final[int] = 1500
 logger = app.logger
 
 
@@ -224,6 +238,29 @@ def load_state() -> State:
 
 def save_state(state: State) -> None:
     redis_store.set(STATE_KEY, json.dumps(state))
+    _notify_state_change()
+
+
+def _state_change_token() -> str:
+    with _STATE_CHANGE_CONDITION:
+        return f"{_STATE_CHANGE_INSTANCE}-{_STATE_CHANGE_ID}"
+
+
+def _notify_state_change() -> None:
+    global _STATE_CHANGE_ID
+    with _STATE_CHANGE_CONDITION:
+        _STATE_CHANGE_ID += 1
+        _STATE_CHANGE_CONDITION.notify_all()
+
+
+def _wait_for_state_change(since: str, timeout_ms: int) -> None:
+    deadline = time.monotonic() + timeout_ms / 1000
+    with _STATE_CHANGE_CONDITION:
+        while f"{_STATE_CHANGE_INSTANCE}-{_STATE_CHANGE_ID}" == since:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                return
+            _STATE_CHANGE_CONDITION.wait(remaining)
 
 
 def now_ms() -> int:
@@ -2900,11 +2937,29 @@ def api_get_display():
     elapsed_ms: Laufzeit seit dem Start (nur state running), time_ms: gestoppte Zeit.
     last_*: letzter abgeschlossener Lauf (bei Bahn: letzte Zeit dieser Bahn).
     lanes (nur Starter): Bahnen des Laufs als "bahn,zustand,ms;..." (w/r/s, ms nur bei s).
+    wait_ms/since: optionale begrenzte Warteabfrage fuer den Starter; state_seq ist die Aenderungskennung.
     """
+    mac = request.args.get("mac", "").strip()
+    try:
+        wait_ms = int(request.args.get("wait_ms", "0"))
+    except ValueError:
+        return jsonify({"ok": False, "error": "invalid wait_ms"}), 400
+    if not 0 <= wait_ms <= DISPLAY_LONG_POLL_MAX_MS:
+        return jsonify({"ok": False, "error": "wait_ms out of range"}), 400
+    since = request.args.get("since", "")
+    if len(since) > 64:
+        return jsonify({"ok": False, "error": "since out of range"}), 400
+
+    state_seq = _state_change_token()
     st = load_state()
     _maybe_advance_run(st)
-    mac = request.args.get("mac", "").strip()
     lane = _lane_for_mac(st, mac) if mac else None
+    if lane == STARTER_KEY and wait_ms and since == state_seq:
+        _wait_for_state_change(since, wait_ms)
+        state_seq = _state_change_token()
+        st = load_state()
+        _maybe_advance_run(st)
+        lane = _lane_for_mac(st, mac) if mac else None
     run = int(st.get("current_run") or 0)
     attempt = int(st.get("current_attempt") or 1)
     run_key = _attempt_key(run, attempt)
@@ -2940,6 +2995,7 @@ def api_get_display():
     }
     out.update(_ota_offer_for(st, mac))
     out.update(_wifi_offer_for(st, mac))
+    out["state_seq"] = state_seq
     if mac and _is_range_test_taster(st, mac):
         # Funktest: Taster zeigt nur die Signalstaerke (Rolle "range"); die Schwellen stammen aus den Grenzwerten
         warn, crit = limits_module.merged(st.get("settings", {}).get("limits"))["taster"]["rssi"]["values"]
