@@ -5,6 +5,7 @@ Jede Version ist als Git-Tag `vX.Y.Z` markiert und kann in der Weboberfläche un
 
 | Version | Datum | Änderung |
 |---|---|---|
+| v0.41.22 | 2026-11-15 | Wettkampf-Zustandssperre wartet höchstens 250 ms statt 10 s; Redis-Verbindungen sind auf 1 s begrenzt, damit Fehler die Sperre nicht minutenlang festhalten. Sperr-Timeouts nennen die haltende Route im Log. Unabhängige Alarmstatusmeldungen blockieren keine Wettkampf-Schreibvorgänge mehr. |
 | v0.41.21 | 2026-11-14 | Ladeplatz-Spannungsverlauf entfernt: unnötige Messwertpufferung, Verarbeitung und Übertragung entfallen; aktuelle Spannungen bleiben in der Ladeplatz-Statusanzeige sichtbar. Schreibende API-Anfragen werden bei belegter Zustandssperre mit 503 abgelehnt, statt ungeschützt fortzufahren. |
 | v0.41.20 | 2026-11-14 | Stoppuhr und Tasteranzeigen: Startkartennamen werden mit Vorname vor Nachname dargestellt. |
 | v0.41.19 | 2026-11-14 | Vitaldaten: Einweg-Diagramm „Pi-Empfangszeit minus Taster-Zeitstempel“ entfernt. Im Lauf-Dropdown wird der aktuell aktive Server-Lauf fett markiert. |

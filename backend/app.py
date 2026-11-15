@@ -1,6 +1,6 @@
 # ----------------------------------------
 # Stoppuhr Webserver
-# Version: v0.41.21
+# Version: v0.41.22
 # Status: stable-beta
 # ----------------------------------------
 
@@ -24,7 +24,9 @@ from typing import Any, Final, Optional, TypedDict
 
 import psutil
 import redis
-from flask import Flask, Response, abort, g, jsonify, redirect, render_template, request, send_file, session
+from flask import (
+    Flask, Response, abort, g, has_request_context, jsonify, redirect, render_template, request, send_file, session,
+)
 from flask.sessions import SecureCookieSessionInterface
 from flask.typing import ResponseReturnValue
 from werkzeug.exceptions import HTTPException
@@ -44,7 +46,7 @@ import node_names
 from xml_writer import create_xml_heats
 
 
-APP_VERSION: Final[str] = "0.41.21"
+APP_VERSION: Final[str] = "0.41.22"
 DEFAULT_PORT: Final[int] = 1999  # Since JAuswertung expected this port
 EXIT_ERROR: Final[int] = 1
 STATE_KEY: Final[str] = "STATE"
@@ -66,6 +68,8 @@ redis_store = redis.Redis(
     port=int(os.environ.get("REDIS_PORT", "6379")),
     db=0,
     decode_responses=True,
+    socket_connect_timeout=1.0,
+    socket_timeout=1.0,
 )
 logger = app.logger
 
@@ -317,12 +321,28 @@ def _maybe_advance_run(st: State) -> None:
     finished = st.get("run_finished_ts")
     if finished is not None and now_ms() - int(finished) >= _auto_next_delay_ms(st):
         # Lesende Routen laufen ohne Sperre; nur das Weiterschalten sperrt und liest neu
-        with _STATE_LOCK:
-            fresh = load_state()
-            if fresh.get("run_finished_ts") is not None:
-                _advance_run(fresh)
-            st.clear()
-            st.update(fresh)
+        owner_tracked = False
+        lock_started = time.monotonic()
+        try:
+            with _STATE_LOCK:
+                lock_started = time.monotonic()
+                method = request.method if has_request_context() else "internal"
+                path = request.path if has_request_context() else "run-advance"
+                owner_tracked = _record_state_lock_owner(method, path, lock_started)
+                fresh = load_state()
+                if fresh.get("run_finished_ts") is not None:
+                    _advance_run(fresh)
+                st.clear()
+                st.update(fresh)
+        finally:
+            held_ms = (time.monotonic() - lock_started) * 1000
+            if owner_tracked:
+                _clear_state_lock_owner()
+                if held_ms >= 250:
+                    logger.warning(
+                        "Lang gehaltene Zustandssperre: %s %s (Wartezeit 0 ms; gehalten %.0f ms)",
+                        method, path, held_ms,
+                    )
 
 
 def _parse_attempt_key(key: str) -> Optional[tuple[int, int]]:
@@ -446,13 +466,38 @@ def _require_login() -> Optional[ResponseReturnValue]:
 # gleichzeitige Anfragen (z. B. zwei Taster, die zugleich druecken) gegenseitig und ein Druck geht verloren.
 # Deshalb laufen alle API-Anfragen nacheinander; nur langsame Routen ohne Zustandsaenderung sind ausgenommen.
 _STATE_LOCK: Final = threading.RLock()
-_STATE_LOCK_TIMEOUT_S: Final[int] = 10
+_STATE_LOCK_TIMEOUT_S: Final[float] = 0.25
+_STATE_LOCK_OWNER_LOCK: Final = threading.Lock()
+_STATE_LOCK_OWNER: Optional[dict[str, Any]] = None
+_ALERT_STATE_LOCK: Final = threading.Lock()
 _UNLOCKED_PREFIXES: Final[tuple[str, ...]] = (
     "/api/startcards/reload", "/api/pi-update", "/api/cluster", "/api/system-status", "/api/wifi-config", "/api/node-names",
     "/api/firmware/releases", "/api/firmware/deploy", "/api/firmware/download",
     "/api/charger/firmware", "/api/charger-firmware", "/api/vitals/pi", "/api/vitals/history",
-    "/api/archive",
+    "/api/archive", "/api/alert-state",
 )
+
+
+def _record_state_lock_owner(method: str, path: str, started: float) -> bool:
+    global _STATE_LOCK_OWNER
+    thread_id = threading.get_ident()
+    with _STATE_LOCK_OWNER_LOCK:
+        if _STATE_LOCK_OWNER and _STATE_LOCK_OWNER["thread_id"] == thread_id:
+            return False
+        _STATE_LOCK_OWNER = {
+            "method": method,
+            "path": path,
+            "started": started,
+            "thread_id": thread_id,
+        }
+    return True
+
+
+def _clear_state_lock_owner() -> None:
+    global _STATE_LOCK_OWNER
+    with _STATE_LOCK_OWNER_LOCK:
+        if _STATE_LOCK_OWNER and _STATE_LOCK_OWNER["thread_id"] == threading.get_ident():
+            _STATE_LOCK_OWNER = None
 
 
 @app.before_request
@@ -462,8 +507,22 @@ def _state_lock_enter() -> Optional[ResponseReturnValue]:
     if request.method in ("GET", "HEAD") and path != "/api/network-status":
         return
     if path.startswith("/api/") and not path.startswith(_UNLOCKED_PREFIXES):
+        wait_started = time.monotonic()
         if not _STATE_LOCK.acquire(timeout=_STATE_LOCK_TIMEOUT_S):
-            logger.warning("API-Anfrage wegen belegter Zustandssperre abgelehnt: %s %s", request.method, path)
+            waited_ms = (time.monotonic() - wait_started) * 1000
+            with _STATE_LOCK_OWNER_LOCK:
+                owner = dict(_STATE_LOCK_OWNER) if _STATE_LOCK_OWNER else None
+            owner_description = "unbekannt"
+            if owner:
+                owner_age_ms = (time.monotonic() - owner["started"]) * 1000
+                owner_description = (
+                    f"{owner['method']} {owner['path']} seit {owner_age_ms:.0f} ms"
+                )
+            logger.warning(
+                "API-Anfrage wegen belegter Zustandssperre abgelehnt: %s %s "
+                "(Wartezeit %.0f ms; gehalten von %s)",
+                request.method, path, waited_ms, owner_description,
+            )
             response = jsonify({
                 "ok": False,
                 "error": "state_busy",
@@ -472,12 +531,26 @@ def _state_lock_enter() -> Optional[ResponseReturnValue]:
             response.headers["Retry-After"] = "1"
             return response, 503
         g.state_locked = True
+        g.state_lock_started = time.monotonic()
+        g.state_lock_wait_ms = (g.state_lock_started - wait_started) * 1000
+        g.state_lock_owner_tracked = _record_state_lock_owner(
+            request.method, path, g.state_lock_started
+        )
 
 
 @app.teardown_request
 def _state_lock_exit(_exc: Optional[BaseException]) -> None:
     if g.pop("state_locked", False):
+        held_ms = (time.monotonic() - g.pop("state_lock_started")) * 1000
+        wait_ms = g.pop("state_lock_wait_ms")
+        if g.pop("state_lock_owner_tracked", False):
+            _clear_state_lock_owner()
         _STATE_LOCK.release()
+        if held_ms >= 250:
+            logger.warning(
+                "Lang gehaltene Zustandssperre: %s %s (Wartezeit %.0f ms; gehalten %.0f ms)",
+                request.method, request.path, wait_ms, held_ms,
+            )
 
 
 class _RedisKeySessions(SecureCookieSessionInterface):
@@ -1471,13 +1544,14 @@ def api_post_alert_state() -> ResponseReturnValue:
         return sorted({str(t)[:200] for t in items})[:50] if isinstance(items, list) else []
 
     yellow, red = texts("yellow"), texts("red")
-    prev = _alert_state()
-    seq = int(prev.get("yellow_seq") or 0)
-    if any(t not in (prev.get("yellow") or []) for t in yellow):
-        seq += 1
-    redis_store.set(
-        ALERT_STATE_KEY, json.dumps({"ts": now_ms(), "yellow": yellow, "red": bool(red), "yellow_seq": seq})
-    )
+    with _ALERT_STATE_LOCK:
+        prev = _alert_state()
+        seq = int(prev.get("yellow_seq") or 0)
+        if any(t not in (prev.get("yellow") or []) for t in yellow):
+            seq += 1
+        redis_store.set(
+            ALERT_STATE_KEY, json.dumps({"ts": now_ms(), "yellow": yellow, "red": bool(red), "yellow_seq": seq})
+        )
     return jsonify({"ok": True})
 
 
