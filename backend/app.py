@@ -1,6 +1,6 @@
 # ----------------------------------------
 # Stoppuhr Webserver
-# Version: v0.44.0
+# Version: v0.44.1
 # Status: stable-beta
 # ----------------------------------------
 
@@ -57,7 +57,7 @@ from werkzeug.exceptions import HTTPException
 from xml_writer import create_xml_heats
 
 
-APP_VERSION: Final[str] = "0.44.0"
+APP_VERSION: Final[str] = "0.44.1"
 DEFAULT_PORT: Final[int] = 1999  # Since JAuswertung expected this port
 EXIT_ERROR: Final[int] = 1
 STATE_KEY: Final[str] = "STATE"
@@ -3361,14 +3361,35 @@ def _handle_trigger(st: State, payload: dict[str, Any], replay: bool = False):
         current_attempt = int(st.get("current_attempt") or 1)
         current_key = _attempt_key(int(current_run), current_attempt)
 
-    lanes_in_run = [v["Bahn"] for v in st.get("startcards_per_run", {}).get(str(current_run), [])]
+    cards_per_run = st.get("startcards_per_run") or {}
+    lanes_in_run = [v["Bahn"] for v in cards_per_run.get(str(current_run), [])]
     triggers_per_run = st.get("triggers_per_run") or {}
     triggers_per_run.setdefault(current_key, {})
     if lane != STARTER_KEY and test_lane is None and lane not in lanes_in_run:
-        if not replay and st.get("run_finished_ts") is not None and payload.get("ts") is not None:
+        started = triggers_per_run[current_key].get(STARTER_KEY)
+        if not replay and payload.get("ts") is not None and (
+            st.get("run_finished_ts") is not None or not started
+        ):
             _defer_press(st, mac_norm, ts_val, payload.get("trigger_id"), lane=lane)
             save_state(st)
-            return jsonify({"ok": True, "deferred": True, "reason": "next_run_not_started"})
+            reason = "next_run_not_started" if started else "run_not_started"
+            return jsonify({"ok": True, "deferred": True, "reason": reason})
+        if started and ts_val < int(started["ts"]) - START_DEVIATION_WINDOW_MS:
+            for key, presses in triggers_per_run.items():
+                previous = _parse_attempt_key(key)
+                previous_start = (presses or {}).get(STARTER_KEY)
+                if key == current_key or not previous or not previous_start:
+                    continue
+                previous_cards = cards_per_run.get(str(previous[0])) or []
+                if int(previous_start["ts"]) < ts_val and (
+                    not previous_cards or any(str(card.get("Bahn")) == lane for card in previous_cards)
+                ):
+                    return _review_lane_press(st, {
+                        "mac": mac_norm, "ts": ts_val, "lane": lane,
+                        "trigger_id": payload.get("trigger_id"),
+                    }, "before_current_start")
+        if started and lanes_in_run:
+            return _ignored_press(st, payload, "empty_lane", current_key)
         return _review_lane_press(st, {
             "mac": mac_norm, "ts": ts_val, "lane": lane,
             "trigger_id": payload.get("trigger_id"),

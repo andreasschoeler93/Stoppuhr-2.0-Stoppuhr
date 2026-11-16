@@ -5,6 +5,7 @@ Jede Version ist als Git-Tag `vX.Y.Z` markiert und kann in der Weboberfläche un
 
 | Version | Datum | Änderung |
 |---|---|---|
+| v0.44.1 | 2026-11-16 | Drücke leerer Bahnen nach Zuordnung zum Lauf ignorieren statt unnötig zur Klärung zu schicken; mehrdeutige ältere Ereignisse bleiben zur Prüfung erhalten. |
 | v0.44.0 | 2026-11-16 | Bahndrücke bis drei Sekunden vor dem Start als Startabweichung behandeln; nicht vorgesehene Bahndrücke zur Klärung speichern. Dashboard-Warnung bei HTTP-4xx-Ablehnung (Taster ab v0.22.0). Die Drei-Sekunden-Regel und die eingeschränkte Sichtbarkeit von Warnungen beachten; Anlagenprüfung steht aus. |
 | v0.43.0 | 2026-11-16 | Vitaldaten-Diagramme mit festen, bei Bedarf erweiterten Anzeigebereichen; Bedien- und Bestätigungstöne aller Taster im Wettkampf schaltbar und nach Wettkampfende automatisch wieder eingeschaltet (Taster ab v0.21.0). Warntöne bleiben hörbar. |
 | v0.42.0 | 2026-11-16 | Telemetrie außerhalb der Wettkampf-Sperre; Diagnose langer Sperren. Wiederholte Tastendrücke anhand ihrer ID erkennen, vorgemerkte Drücke einzeln nachverarbeiten und mehrdeutige Bahn- und Zieleinlaufdrücke sichtbar manuell klären und archivieren. Puffergrenzen und Ausfallrisiken beachten; echte Anlagen- und Failover-Abnahme steht aus. |

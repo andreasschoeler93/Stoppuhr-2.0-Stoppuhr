@@ -136,17 +136,52 @@ class StartDeviationTests(unittest.TestCase):
         self.assertEqual(self.deviation(), {})
         self.assertEqual(self.state["unresolved_lane_presses"][0]["reason"], "before_current_start")
 
-    def test_lane_absent_from_startcards_goes_to_review(self):
+    def test_empty_lane_before_start_is_deferred_then_ignored_idempotently(self):
         self.state["startcards_per_run"]["5"] = [{"Bahn": "2"}]
         event = {"mac": "L1", "ts": 9_900, "trigger_id": "boot:missing"}
         first = self.client.post("/api/triggers", json=event)
         self.assertEqual(first.status_code, 200)
-        self.assertEqual(first.json["reason"], "manual_lane_review")
+        self.assertTrue(first.json["deferred"])
         self.press("AA", 10_000)
         retry = self.client.post("/api/triggers", json=event)
-        self.assertEqual(retry.json["id"], first.json["id"])
-        self.assertEqual(self.state["unresolved_lane_presses"][0]["original_lane"], "1")
+        self.assertEqual(retry.json["reason"], "empty_lane")
+        self.assertFalse(self.state.get("unresolved_lane_presses"))
+        self.assertFalse(self.state.get("deferred_presses"))
         self.assertEqual(self.deviation(), {})
+        self.assertIsNone(self.state["triggers_per_run"]["5"].get("1"))
+        conflict = self.client.post("/api/triggers", json={**event, "ts": 9_901})
+        self.assertEqual(conflict.status_code, 422)
+
+    def test_empty_lane_after_start_is_ignored(self):
+        self.state["startcards_per_run"]["5"] = [{"Bahn": "2"}]
+        self.press("AA", 10_000)
+        for ts in (9_900, 10_000, 10_100, 15_000):
+            self.assertEqual(self.press("L1", ts).json["reason"], "empty_lane")
+        self.assertFalse(self.state.get("unresolved_lane_presses"))
+        self.assertIsNone(self.state["triggers_per_run"]["5"].get("1"))
+        self.assertEqual(self.deviation(), {})
+
+    def test_empty_lane_old_event_for_previous_occupied_lane_needs_review(self):
+        self.state["startcards_per_run"]["4"] = [{"Bahn": "1"}]
+        self.state["startcards_per_run"]["5"] = [{"Bahn": "2"}]
+        self.state["triggers_per_run"] = {"4": {"starter": {"ts": 1_000, "mac": "AA"}}}
+        self.press("AA", 10_000)
+        response = self.press("L1", 5_000)
+        self.assertEqual(response.json["reason"], "manual_lane_review")
+        self.assertEqual(self.state["unresolved_lane_presses"][0]["reason"], "before_current_start")
+
+    def test_empty_lane_old_event_deferred_before_start_still_needs_review(self):
+        self.state["startcards_per_run"]["4"] = [{"Bahn": "1"}]
+        self.state["startcards_per_run"]["5"] = [{"Bahn": "2"}]
+        self.state["triggers_per_run"] = {"4": {"starter": {"ts": 1_000, "mac": "AA"}}}
+        self.assertTrue(self.press("L1", 5_000).json["deferred"])
+        self.press("AA", 10_000)
+        self.assertEqual(self.state["unresolved_lane_presses"][0]["reason"], "before_current_start")
+
+    def test_no_startcards_does_not_assume_empty_lane(self):
+        self.state["startcards_per_run"]["5"] = []
+        self.press("AA", 10_000)
+        self.assertEqual(self.press("L1", 10_100).json["reason"], "manual_lane_review")
 
     def test_lane_of_next_run_is_deferred_if_absent_from_completed_run(self):
         self.state["startcards_per_run"] = {"5": [{"Bahn": "2"}], "6": [{"Bahn": "1"}]}
@@ -160,6 +195,24 @@ class StartDeviationTests(unittest.TestCase):
         self.assertEqual(response.json["reason"], "next_run_not_started")
         self.assertEqual(self.state["deferred_presses"][0]["lane"], "1")
         self.assertFalse(self.state.get("unresolved_lane_presses"))
+        with patch.object(stopwatch, "_stop_lockout_ms", return_value=500):
+            self.press("AA", 9_000)
+        self.assertEqual(self.state["triggers_per_run"]["6"]["1"]["ts"], 9_900)
+        self.assertFalse(self.state.get("deferred_presses"))
+
+    def test_empty_lane_deferred_after_run_is_ignored_if_next_run_also_empty(self):
+        self.state["startcards_per_run"] = {"5": [{"Bahn": "2"}], "6": [{"Bahn": "2"}]}
+        self.state["triggers_per_run"] = {
+            "5": {"starter": {"ts": 1_000, "mac": "AA"}, "2": {"ts": 6_000, "mac": "L2"}}
+        }
+        self.state["run_finished_ts"] = 20_000
+        self.state["run_done_event_ts"] = {"5": 6_000}
+        with patch.object(stopwatch, "now_ms", return_value=20_100):
+            self.assertTrue(self.press("L1", 9_900).json["deferred"])
+            self.press("AA", 10_000)
+        self.assertFalse(self.state.get("unresolved_lane_presses"))
+        self.assertFalse(self.state.get("deferred_presses"))
+        self.assertIsNone(self.state["triggers_per_run"]["6"].get("1"))
 
     def test_six_simultaneous_starts_and_an_older_deferred_event(self):
         self.state["startcards_per_run"]["5"] = [{"Bahn": str(n)} for n in range(1, 7)]
