@@ -1,6 +1,6 @@
 # ----------------------------------------
 # Stoppuhr Webserver
-# Version: v0.44.2
+# Version: v0.44.3
 # Status: stable-beta
 # ----------------------------------------
 
@@ -57,7 +57,7 @@ from werkzeug.exceptions import HTTPException
 from xml_writer import create_xml_heats
 
 
-APP_VERSION: Final[str] = "0.44.2"
+APP_VERSION: Final[str] = "0.44.3"
 DEFAULT_PORT: Final[int] = 1999  # Since JAuswertung expected this port
 EXIT_ERROR: Final[int] = 1
 STATE_KEY: Final[str] = "STATE"
@@ -116,6 +116,7 @@ logger.addHandler(_pi_log_handler)
 
 class Vital(TypedDict):
     battery: float
+    battery_raw: NotRequired[float]
     temp: float
     humidity: float
     ts: int
@@ -1168,6 +1169,7 @@ def _taster_with_vitals(taster: Taster, vitals: dict[str, Vital]) -> dict[str, A
     return {
         **taster,
         "battery": v.get("battery"),
+        "battery_raw": v.get("battery_raw"),
         "rssi": v.get("rssi"),
         "vbat": v.get("vbat"),
         "temp": v.get("temp"),
@@ -1408,6 +1410,9 @@ def api_post_vitals():
         new_vital["trigger_rejected"] = payload["trigger_rejected"]
     if isinstance(payload.get("trigger_rejection_seen"), bool):
         new_vital["trigger_rejection_seen"] = payload["trigger_rejection_seen"]
+    raw_battery = payload.get("battery_raw")
+    if isinstance(raw_battery, (int, float)) and not isinstance(raw_battery, bool) and 0 <= raw_battery <= 100:
+        new_vital["battery_raw"] = raw_battery
     # Beginn der aktuellen Online-Phase: bleibt, solange die Meldungen nicht laenger als der Timeout ausbleiben
     prev = st["vitals"].get(mac) or {}
     prev_ts = prev.get("ts")
@@ -1438,8 +1443,10 @@ def api_post_vitals():
     if known_taster and rules is not None and role is not None:
         with _measure_step(steps, "diagnose"):
             vitals_history.set_label(redis_store, str(mac), known_taster.get("letter"))
+            observations = dict(new_vital)
+            observations["battery"] = new_vital.get("battery_raw", new_vital["battery"])
             device_logs.record_observations(
-                redis_store, mac, dict(new_vital), rules, role, new_vital["ts"],
+                redis_store, mac, observations, rules, role, new_vital["ts"],
             )
         if "logs" in payload:
             with _measure_step(steps, "geraetelog"):

@@ -272,7 +272,7 @@ function sensorAlerts(tasters, piNodes) {
       if (t.roleText) push("danger", `${who} (${t.roleText}) ist offline.`);
       return;
     }
-    check(who, t.battery, lim.battery, "Akku", 0, "%");
+    check(who, t.battery_raw ?? t.battery, lim.battery, "Akku", 0, "%");
     check(who, t.vbat, lim.vbat, "Akkuspannung", 2, "V");
     check(who, t.temp, lim.temp, "Temperatur", 1, "°C");
     check(who, t.humidity, lim.humidity, "Luftfeuchte", 0, "%");
@@ -347,7 +347,7 @@ function vitalsStatusHtml() {
   const rows = [
     ["Status", t => t.online ? '<span class="badge text-bg-success">online</span>' : '<span class="badge text-bg-secondary">offline</span>'],
     ["Online seit", t => onlineSinceHtml(t)],
-    ["Akku", t => num(t.battery, 0, "%", LIMITS.taster.battery)],
+    ["Akku", t => t.battery == null ? "–" : levelHtml(`${Number(t.battery).toFixed(0)} %`, limitLevel(t.battery_raw ?? t.battery, LIMITS.taster.battery))],
     ["Spannung", t => num(t.vbat, 2, "V", LIMITS.taster.vbat)],
     ["Temperatur", t => num(t.temp, 1, "°C", LIMITS.taster.temp)],
     ["Luftfeuchte", t => num(t.humidity, 0, "%", LIMITS.taster.humidity)],
@@ -1464,6 +1464,7 @@ async function loadButtons() {
     last_seen_ms: t.last_seen_ts || null,
     last_event_type: null,
     battery_percent: t.online ? (t.battery ?? null) : null,
+    battery_raw: t.online ? (t.battery_raw ?? t.battery ?? null) : null,
     rssi_dbm: t.online ? (t.rssi ?? null) : null,
     vbat: t.online ? (t.vbat ?? null) : null,
     temp: t.online ? (t.temp ?? null) : null,
@@ -1523,7 +1524,7 @@ function vitalsHtml(btn) {
   if (!btn || !btn.online) return "offline";
   const lim = LIMITS.taster, parts = [];
   if (btn.battery_percent != null) {
-    const bat = [limitLevel(btn.battery_percent, lim.battery), limitLevel(btn.vbat, lim.vbat)];
+    const bat = [limitLevel(btn.battery_raw ?? btn.battery_percent, lim.battery), limitLevel(btn.vbat, lim.vbat)];
     const level = bat.includes("danger") ? "danger" : bat.includes("warning") ? "warning" : null;
     parts.push(levelHtml(escapeHtml(btn.battery_percent + "%" + (btn.vbat != null ? " (" + Number(btn.vbat).toFixed(2) + " V)" : "")), level));
   }
@@ -1540,7 +1541,7 @@ function tasterLevel(btn, hasRole) {
   if (!btn) return "";
   if (!btn.online) return hasRole ? "danger" : "";
   const lim = LIMITS.taster;
-  const levels = [limitLevel(btn.battery_percent, lim.battery), limitLevel(btn.vbat, lim.vbat),
+  const levels = [limitLevel(btn.battery_raw ?? btn.battery_percent, lim.battery), limitLevel(btn.vbat, lim.vbat),
     limitLevel(btn.temp, lim.temp), limitLevel(btn.humidity, lim.humidity), limitLevel(btn.rssi_dbm, lim.rssi)];
   return levels.includes("danger") ? "danger" : levels.includes("warning") ? "warning" : "";
 }

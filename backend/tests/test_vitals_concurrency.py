@@ -105,6 +105,28 @@ class VitalsConcurrencyTests(unittest.TestCase):
             ]
         )
 
+    def test_smoothed_battery_and_raw_warning_value_are_kept_separate(self):
+        with patch.object(stopwatch.vitals_history, "add") as history:
+            status, data = self.post(
+                "/api/vitals", {"mac": self.macs[1], "battery": 50, "battery_raw": 10, "vbat": 3.69}
+            )
+        self.assertEqual(status, 200)
+        self.assertEqual((data["vital"]["battery"], data["vital"]["battery_raw"]), (50, 10))
+        self.assertEqual(history.call_args.args[3]["battery"], 50)
+        self.assertEqual(stopwatch.device_logs.record_observations.call_args.args[2]["battery"], 10)
+        with stopwatch.app.test_client() as client:
+            taster = next(
+                t for t in client.get("/api/taster").json["tasters"] if t["mac"] == self.macs[1]
+            )
+        self.assertEqual((taster["battery"], taster["battery_raw"], taster["vbat"]), (50, 10, 3.69))
+
+    def test_old_firmware_uses_unsmoothed_battery_for_diagnostics(self):
+        with patch.object(stopwatch.vitals_history, "add"):
+            status, data = self.post("/api/vitals", {"mac": self.macs[1], "battery": 12})
+        self.assertEqual(status, 200)
+        self.assertNotIn("battery_raw", data["vital"])
+        self.assertEqual(stopwatch.device_logs.record_observations.call_args.args[2]["battery"], 12)
+
     def test_slow_vital_history_does_not_block_start_or_lane_stops(self):
         entered = threading.Event()
         release = threading.Event()

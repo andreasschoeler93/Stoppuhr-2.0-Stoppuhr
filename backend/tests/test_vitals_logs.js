@@ -43,6 +43,19 @@ test("Taster logs are below WLAN and belong to each Taster, including offline de
   assert.match(rows[logs], /<td class="text-center text-nowrap text-muted">–<\/td>/);
 });
 
+test("battery warning uses raw reading while displaying smoothed percent", () => {
+  const { context } = loadApp();
+  vm.runInContext(`vitalsData = { tasters: [
+    { letter: "A", mac: "AA:BB:CC:DD:EE:FF", online: true, battery: 50, battery_raw: 10 }
+  ] };`, context);
+  assert.match(vm.runInContext("vitalsStatusHtml()", context), /val-danger[^>]*>50 %/);
+  assert.match(vm.runInContext("sensorAlerts(vitalsData.tasters, [])[0].text", context), /10 %/);
+  assert.match(vm.runInContext('vitalsHtml({online:true,battery_percent:50,battery_raw:10})', context), /val-danger[^>]*>50%/);
+  assert.equal(vm.runInContext('tasterLevel({online:true,battery_percent:50,battery_raw:10}, true)', context), "danger");
+  vm.runInContext("delete vitalsData.tasters[0].battery_raw; vitalsData.tasters[0].battery = 10", context);
+  assert.match(vm.runInContext("sensorAlerts(vitalsData.tasters, [])[0].text", context), /10 %/);
+});
+
 test("Alle starten sends one all-slots request and waits for completion", async () => {
   const { context, elements } = loadApp();
   const all = { disabled: false, dataset: {}, hasAttribute: name => name === "data-wake-all" };
