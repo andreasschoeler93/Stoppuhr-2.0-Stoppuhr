@@ -19,7 +19,7 @@ function element() {
 }
 
 function setup() {
-  const elements = { unresolvedLaneAlerts: element(), unresolvedFinishAlerts: element() };
+  const elements = { unresolvedLaneAlerts: element(), unresolvedFinishAlerts: element(), deferredPressNotice: element() };
   const document = {
     createElement: element,
     getElementById: id => elements[id] || { addEventListener() {} },
@@ -36,6 +36,22 @@ function setup() {
   );
   return { elements, context };
 }
+
+test("deferred presses show context and require explicit transfer to review", async () => {
+  const { elements, context } = setup();
+  context.testPresses = [{ item: { mac: "L1", ts: 15000, recv: 16000, lane: "1" },
+    start_context: { before: [{ run_key: "5", ts: 10000 }], after: [] } }];
+  vm.runInContext('renderDeferredPresses(testPresses, null, "revision")', context);
+  const row = elements.deferredPressNotice.children[1];
+  assert.match(row.children[0].textContent, /Bahn 1/);
+  assert.match(row.children[0].textContent, /Vorheriger Start: Lauf 5/);
+  await row.children[1].handlers.click();
+  assert.equal(context.posted.path, "/api/deferred/review");
+  assert.equal(context.posted.body.index, 0);
+  assert.equal(context.posted.body.revision, "revision");
+  vm.runInContext('renderDeferredPresses(testPresses, "5", "revision")', context);
+  assert.equal(elements.deferredPressNotice.children[1].children[1].disabled, true);
+});
 
 test("manual lane choices show durations and survive unchanged polling", async () => {
   const { elements, context } = setup();

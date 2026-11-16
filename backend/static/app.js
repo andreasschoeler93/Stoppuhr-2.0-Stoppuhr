@@ -1611,6 +1611,7 @@ let serverOffsetMs = 0; // Serverzeit minus Browserzeit
 let lastServerKey = null;
 let lastUnresolvedFinish = null;
 let lastUnresolvedLane = null;
+let lastDeferredPresses = null;
 let laneReviewInputs = new Map();
 let finishReviewInputs = new Map();
 
@@ -1646,10 +1647,49 @@ function laneReviewReason(reason) {
     before_current_start: "Druck liegt mehr als 3 Sekunden vor dem bei der Verarbeitung aktuellen Start.",
     lane_not_in_run: "Bahn war im bei der Verarbeitung aktuellen Lauf nicht in den Startkarten.",
     role_changed: "Die Tasterrolle hat sich seit der Vormerkung geändert.",
+    deferred_manual_review: "Vorgemerkter Druck wurde ausdrücklich zur manuellen Prüfung übernommen.",
   };
   if (reasons[reason]) return reasons[reason];
   if (/^replay_http_\d+$/.test(reason || "")) return `Vorgemerkter Druck konnte nicht verarbeitet werden (${reason}).`;
   return `Grund: ${reason || "unbekannt"}.`;
+}
+
+function renderDeferredPresses(presses, replayPending, revision) {
+  const signature = JSON.stringify([presses, replayPending, revision]);
+  if (signature === lastDeferredPresses) return;
+  lastDeferredPresses = signature;
+  const box = byId("deferredPressNotice");
+  box.replaceChildren();
+  box.classList.toggle("d-none", !presses.length);
+  if (!presses.length) return;
+  const help = document.createElement("p");
+  help.textContent = `${presses.length} Tastendruck/Drücke vorgemerkt. Sie warten auf den zugehörigen Start. Nur zur manuellen Klärung übernehmen, wenn sie nicht mehr automatisch verarbeitet werden sollen.`;
+  box.append(help);
+  presses.forEach(({ item, start_context }, index) => {
+    const row = document.createElement("div");
+    row.className = "border-top pt-2 mb-2";
+    const label = document.createElement("p");
+    label.style.whiteSpace = "pre-line";
+    label.textContent = `Taster ${item.mac}, Druckzeit ${reviewTimestamp(item.ts)}, bisherige Zuordnung: ${reviewRole(item.lane)}.\n${reviewStartContext({ ts: item.ts, start_context })}\nStartzeiten sind nur Orientierung.`;
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "btn btn-sm btn-outline-dark";
+    button.textContent = "Zur manuellen Klärung";
+    button.disabled = !!replayPending;
+    button.addEventListener("click", async () => {
+      if (!confirm("Diesen Druck zur manuellen Klärung übernehmen? Er wird dabei nicht als Zeit gewertet.")) return;
+      button.disabled = true;
+      try {
+        await apiPost("/api/deferred/review", { index, item, revision });
+        await loadRunStatus();
+      } catch (error) {
+        alert("Übernahme fehlgeschlagen: " + error.message);
+        button.disabled = false;
+      }
+    });
+    row.append(label, button);
+    box.append(row);
+  });
 }
 
 function renderUnresolvedLanes(presses) {
@@ -1848,9 +1888,7 @@ async function loadRunStatus() {
   renderRejectedTasters(runStatus.rejected_tasters || []);
   byId("deferredBufferAlert").classList.toggle("d-none", !runStatus.deferred_buffer_full);
   byId("replayPendingAlert").classList.toggle("d-none", !runStatus.replay_pending_run);
-  const deferredNotice = byId("deferredPressNotice");
-  deferredNotice.classList.toggle("d-none", !runStatus.deferred_count);
-  deferredNotice.textContent = `${runStatus.deferred_count} Tastendruck/Drücke vorgemerkt. Der Wettkampf kann erst beendet werden, wenn sie verarbeitet sind.`;
+  renderDeferredPresses(runStatus.deferred_presses || [], runStatus.replay_pending_run, runStatus.deferred_revision);
   const clockSync = runStatus.clock_sync || {};
   const clockSyncNotice = byId("clockSyncNotice");
   clockSyncNotice.classList.toggle("alert-success", !!clockSync.ready);

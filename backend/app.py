@@ -1,11 +1,12 @@
 # ----------------------------------------
 # Stoppuhr Webserver
-# Version: v0.44.3
+# Version: v0.44.4
 # Status: stable-beta
 # ----------------------------------------
 
 
 import csv
+import hashlib
 import io
 import json
 import logging
@@ -57,7 +58,7 @@ from werkzeug.exceptions import HTTPException
 from xml_writer import create_xml_heats
 
 
-APP_VERSION: Final[str] = "0.44.3"
+APP_VERSION: Final[str] = "0.44.4"
 DEFAULT_PORT: Final[int] = 1999  # Since JAuswertung expected this port
 EXIT_ERROR: Final[int] = 1
 STATE_KEY: Final[str] = "STATE"
@@ -2963,7 +2964,7 @@ def _defer_press(
     kept = list(st.get("deferred_presses") or [])
     if len(kept) >= DEFERRED_MAX_COUNT:
         raise DeferredBufferFull()
-    item = {"mac": mac, "ts": raw_ts, "recv": now_ms()}
+    item = {"mac": mac, "ts": raw_ts, "recv": now_ms(), "deferred_id": uuid.uuid4().hex}
     if lane is None:
         lane = _lane_for_mac(st, mac)
     if lane is not None:
@@ -3022,6 +3023,10 @@ def _review_lane_press(st: State, item: dict[str, Any], reason: str) -> Response
     }
     if isinstance(item.get("trigger_id"), str) and 0 < len(item["trigger_id"]) <= 64:
         entry["trigger_id"] = item["trigger_id"]
+    if "recv" in item:
+        entry["recv"] = item["recv"]
+    if "deferred_id" in item:
+        entry["deferred_id"] = item["deferred_id"]
     pending.append(entry)
     save_state(st)
     logger.warning(
@@ -3065,6 +3070,31 @@ def _review_start_context(st: State, ts: int) -> dict[str, list[dict[str, Any]]]
         "before": [start for start in before if start["ts"] == before_ts],
         "after": [start for start in after if start["ts"] == after_ts],
     }
+
+
+def _deferred_revision(pending: list[dict[str, Any]]) -> str:
+    return hashlib.sha256(json.dumps(pending, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+
+
+@app.post("/api/deferred/review")
+def api_review_deferred() -> ResponseReturnValue:
+    st = load_state()
+    payload = request.get_json(force=True, silent=True) or {}
+    if not isinstance(payload, dict):
+        return jsonify({"ok": False, "error": "Ungueltige Anfrage."}), 400
+    if st.get("replay_pending_run"):
+        return jsonify({"ok": False, "error": "Nachverarbeitung zuerst fortsetzen."}), 409
+    index = payload.get("index")
+    item = payload.get("item")
+    pending = st.get("deferred_presses") or []
+    if (
+        payload.get("revision") != _deferred_revision(pending)
+        or isinstance(index, bool) or not isinstance(index, int) or index < 0
+        or index >= len(pending) or not isinstance(item, dict) or pending[index] != item
+    ):
+        return jsonify({"ok": False, "error": "Vormerkung hat sich geändert. Bitte neu prüfen."}), 409
+    st["deferred_presses"] = pending[:index] + pending[index + 1:]  # type: ignore[typeddict-unknown-key]
+    return _review_lane_press(st, item, "deferred_manual_review")
 
 
 @app.post("/api/lane-review/resolve")
@@ -3992,6 +4022,11 @@ def api_get_run_status():
             or len(st.get("unresolved_lane_presses") or []) >= DEFERRED_MAX_COUNT,
             "replay_pending_run": st.get("replay_pending_run"),
             "deferred_count": len(st.get("deferred_presses") or []),
+            "deferred_revision": _deferred_revision(st.get("deferred_presses") or []),
+            "deferred_presses": [
+                {"item": press, "start_context": _review_start_context(st, int(press["ts"]))}
+                for press in st.get("deferred_presses") or []
+            ],
             "rejected_tasters": [
                 {
                     "letter": t.get("letter"),

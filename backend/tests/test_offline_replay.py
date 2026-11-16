@@ -132,6 +132,94 @@ class OfflineReplayTests(unittest.TestCase):
         self.assertEqual(response.status_code, 409)
         self.assertEqual(len(self.state["deferred_presses"]), 1)
 
+    def test_deferred_manual_review_preserves_event_and_retry_receipt(self):
+        event = {"mac": "L1", "ts": 15_000, "trigger_id": "event-1"}
+        self.assertTrue(self.client.post("/api/triggers", json=event).json["deferred"])
+        status = self.client.get("/api/run-status").json
+        item = status["deferred_presses"][0]["item"]
+        response = self.client.post("/api/deferred/review", json={
+            "index": 0, "item": item, "revision": status["deferred_revision"],
+        })
+        self.assertEqual(response.status_code, 200)
+        review = self.state["unresolved_lane_presses"][0]
+        self.assertEqual(review["recv"], item["recv"])
+        self.assertEqual(review["original_lane"], "1")
+        self.assertEqual(review["trigger_id"], event["trigger_id"])
+        self.assertEqual(review["deferred_id"], item["deferred_id"])
+        self.assertEqual(self.state["deferred_presses"], [])
+        self.assertEqual(self.client.post("/api/competition/end", json={}).status_code, 409)
+        self.assertEqual(self.client.post("/api/triggers", json=event).json["id"], review["id"])
+        self.assertEqual(self.client.post("/api/lane-review/resolve", json={
+            "id": review["id"], "action": "park", "run_key": None, "lane": None, "note": "Geprüft",
+        }).status_code, 200)
+        self.assertEqual(self.state["reviewed_lane_presses"][0]["recv"], item["recv"])
+        self.assertEqual(self.client.post("/api/triggers", json=event).status_code, 200)
+        self.assertEqual(self.client.post("/api/competition/end", json={}).status_code, 400)
+        captured = []
+        def capture_archive(state, name):
+            captured.append(copy.deepcopy(state))
+            return "archive-id"
+        with patch.object(stopwatch, "_archive_competition", side_effect=capture_archive):
+            response = self.client.post("/api/competition/end", json={
+                "name": "Wettkampf", "shutdown_tasters": False,
+            })
+        self.assertEqual(response.status_code, 200)
+        saved = captured[0]["reviewed_lane_presses"][0]
+        self.assertEqual(saved["trigger_id"], event["trigger_id"])
+        self.assertEqual(saved["note"], "Geprüft")
+
+    def test_deferred_review_rejects_stale_snapshot_even_for_identical_legacy_events(self):
+        legacy = {"mac": "L1", "ts": 15_000, "recv": 16_000, "lane": "1"}
+        self.state["deferred_presses"] = [legacy.copy(), legacy.copy()]
+        status = self.client.get("/api/run-status").json
+        payload = {"index": 0, "item": legacy, "revision": status["deferred_revision"]}
+        self.assertEqual(self.client.post("/api/deferred/review", json=payload).status_code, 200)
+        self.assertEqual(self.client.post("/api/deferred/review", json=payload).status_code, 409)
+        self.assertEqual(len(self.state["deferred_presses"]), 1)
+        self.assertEqual(len(self.state["unresolved_lane_presses"]), 1)
+
+    def test_deferred_review_rejects_pending_replay_and_full_review_buffer(self):
+        self.press("L1", 15_000)
+        status = self.client.get("/api/run-status").json
+        payload = {"index": 0, "item": status["deferred_presses"][0]["item"],
+                   "revision": status["deferred_revision"]}
+        self.state["replay_pending_run"] = "5"
+        self.assertEqual(self.client.post("/api/deferred/review", json=payload).status_code, 409)
+        self.state["replay_pending_run"] = None
+        self.state["unresolved_lane_presses"] = [{"id": str(i)} for i in range(stopwatch.DEFERRED_MAX_COUNT)]
+        self.assertEqual(self.client.post("/api/deferred/review", json=payload).status_code, 503)
+        self.assertEqual(len(self.state["deferred_presses"]), 1)
+
+    def test_deferred_review_preserves_original_role_after_reassignment(self):
+        self.press("L1", 15_000)
+        self.state["assignments"]["mapping"]["1"] = "L3"
+        status = self.client.get("/api/run-status").json
+        response = self.client.post("/api/deferred/review", json={
+            "index": 0, "item": status["deferred_presses"][0]["item"],
+            "revision": status["deferred_revision"],
+        })
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(self.state["unresolved_lane_presses"][0]["original_lane"], "1")
+
+    def test_deferred_review_failed_save_leaves_event_pending(self):
+        self.press("L1", 15_000)
+        status = self.client.get("/api/run-status").json
+        with patch.object(stopwatch, "save_state", side_effect=RuntimeError("save failed")):
+            response = self.client.post("/api/deferred/review", json={
+                "index": 0, "item": status["deferred_presses"][0]["item"],
+                "revision": status["deferred_revision"],
+            })
+        self.assertEqual(response.status_code, 500)
+        self.assertEqual(len(self.state["deferred_presses"]), 1)
+        self.assertFalse(self.state.get("unresolved_lane_presses"))
+
+    def test_deferred_review_requires_login(self):
+        with patch.dict(stopwatch.app.config, {"AUTH_DISABLED": False}), patch.object(
+            stopwatch.auth, "load", return_value=None
+        ):
+            response = self.client.post("/api/deferred/review", json={})
+        self.assertEqual(response.status_code, 401)
+
     def test_manual_finish_resolution_validates_and_preserves_existing_indices(self):
         self.state["assignments"]["mapping"][stopwatch.FINISH_KEY] = "FIN"
         self.press("AA", 10_000)
