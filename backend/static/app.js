@@ -1610,12 +1610,56 @@ let serverOffsetMs = 0; // Serverzeit minus Browserzeit
 let lastServerKey = null;
 let lastUnresolvedFinish = null;
 let lastUnresolvedLane = null;
+let laneReviewInputs = new Map();
+let finishReviewInputs = new Map();
+
+function reviewRole(role) {
+  if (role == null || role === "") return "unbekannt";
+  if (/^\d+$/.test(String(role))) return `Bahn ${role}`;
+  if (role === "starter") return "Starter";
+  if (role === "ziel") return "Zieleinlauf";
+  return `Rolle ${role}`;
+}
+
+function reviewTimestamp(ts) {
+  const date = new Date(ts);
+  return `${date.toLocaleString("de-DE")}.${String(date.getMilliseconds()).padStart(3, "0")}`;
+}
+
+function reviewStartContext(press) {
+  const context = press.start_context;
+  if (!context) return "Startzeiten für diesen Hinweis nicht verfügbar.";
+  const lines = [];
+  for (const [direction, wording] of [["before", "Vorheriger Start"], ["after", "Nächster Start"]]) {
+    const starts = context[direction] || [];
+    if (!starts.length) continue;
+    const names = starts.map(start => `Lauf ${start.run_key}`).join(", ");
+    const delta = Math.abs(press.ts - starts[0].ts);
+    lines.push(`${wording}: ${names} um ${reviewTimestamp(starts[0].ts)}, ${formatMs(delta)} ${direction === "before" ? "vor" : "nach"} dem Druck.`);
+  }
+  return lines.length ? lines.join("\n") : "Keine aufgezeichneten Startzeiten zum Vergleich vorhanden.";
+}
+
+function laneReviewReason(reason) {
+  const reasons = {
+    before_current_start: "Druck liegt mehr als 3 Sekunden vor dem bei der Verarbeitung aktuellen Start.",
+    lane_not_in_run: "Bahn war im bei der Verarbeitung aktuellen Lauf nicht in den Startkarten.",
+    role_changed: "Die Tasterrolle hat sich seit der Vormerkung geändert.",
+  };
+  if (reasons[reason]) return reasons[reason];
+  if (/^replay_http_\d+$/.test(reason || "")) return `Vorgemerkter Druck konnte nicht verarbeitet werden (${reason}).`;
+  return `Grund: ${reason || "unbekannt"}.`;
+}
 
 function renderUnresolvedLanes(presses) {
   const signature = JSON.stringify(presses);
   if (signature === lastUnresolvedLane) return;
   lastUnresolvedLane = signature;
   const box = byId("unresolvedLaneAlerts");
+  const drafts = new Map([...laneReviewInputs].map(([id, fields]) => [
+    id, { choice: fields.select.value, note: fields.note.value },
+  ]));
+  laneReviewInputs = new Map();
   box.replaceChildren();
   box.classList.toggle("d-none", presses.length === 0);
   if (!presses.length) return;
@@ -1628,7 +1672,14 @@ function renderUnresolvedLanes(presses) {
     const row = document.createElement("div");
     row.className = "border-top pt-2 mb-2";
     const label = document.createElement("p");
-    label.textContent = `Taster ${press.mac}, ${new Date(press.ts).toLocaleString("de-DE")}, bisherige Rolle ${press.original_lane || "unbekannt"} (${press.reason})`;
+    label.style.whiteSpace = "pre-line";
+    label.textContent = [
+      `Taster ${press.mac}, Druckzeit ${reviewTimestamp(press.ts)}, bisherige Zuordnung: ${reviewRole(press.original_lane)}.`,
+      laneReviewReason(press.reason),
+      press.review_run_key ? `Bei der Prüfung aktuell: Lauf ${press.review_run_key} (nicht automatisch der zugehörige Lauf).` : "Lauf bei der Prüfung: für diesen älteren Fall nicht gespeichert.",
+      reviewStartContext(press),
+      "Startzeiten sind nur Orientierung; die tatsächliche Zuordnung muss geprüft werden.",
+    ].join("\n");
     const select = document.createElement("select");
     select.className = "form-select form-select-sm mb-2";
     const empty = document.createElement("option");
@@ -1651,6 +1702,12 @@ function renderUnresolvedLanes(presses) {
     note.className = "form-control form-control-sm mb-2";
     note.maxLength = 500;
     note.placeholder = "Begründung / Bezug zum Protokoll (erforderlich)";
+    const draft = drafts.get(press.id);
+    if (draft) {
+      note.value = draft.note;
+      if ([...select.children].some(option => option.value === draft.choice)) select.value = draft.choice;
+    }
+    laneReviewInputs.set(press.id, { select, note });
     const assign = document.createElement("button");
     const park = document.createElement("button");
     assign.type = park.type = "button";
@@ -1685,6 +1742,8 @@ function renderUnresolvedFinish(presses) {
   if (signature === lastUnresolvedFinish) return;
   lastUnresolvedFinish = signature;
   const box = byId("unresolvedFinishAlerts");
+  const choices = new Map([...finishReviewInputs].map(([id, select]) => [id, select.value]));
+  finishReviewInputs = new Map();
   box.replaceChildren();
   box.classList.toggle("d-none", presses.length === 0);
   if (!presses.length) return;
@@ -1698,7 +1757,8 @@ function renderUnresolvedFinish(presses) {
     const row = document.createElement("div");
     row.className = "d-flex flex-wrap align-items-center gap-2 mb-2";
     const label = document.createElement("span");
-    label.textContent = `Taster ${press.mac}, Ereigniszeit ${new Date(press.ts).toLocaleString("de-DE")}`;
+    label.style.whiteSpace = "pre-line";
+    label.textContent = `Taster ${press.mac}, Zieleinlauf, Druckzeit ${reviewTimestamp(press.ts)}\n${reviewStartContext(press)}\nStartzeiten sind nur Orientierung; die tatsächliche Zuordnung muss geprüft werden.`;
     const select = document.createElement("select");
     select.className = "form-select form-select-sm";
     select.style.width = "auto";
@@ -1720,7 +1780,10 @@ function renderUnresolvedFinish(presses) {
     button.textContent = "Als zusätzliche Zeit zuordnen";
     duplicateButton.textContent = "Als Duplikat bestätigen";
     parkButton.textContent = "Unbewertet dokumentieren";
-    duplicateButton.disabled = true;
+    const savedChoice = choices.get(press.id);
+    if ([...select.children].some(option => option.value === savedChoice)) select.value = savedChoice;
+    finishReviewInputs.set(press.id, select);
+    duplicateButton.disabled = !press.candidates.some(c => c.run_key === select.value && c.duplicate);
     select.addEventListener("change", () => {
       duplicateButton.disabled = !press.candidates.some(c => c.run_key === select.value && c.duplicate);
     });

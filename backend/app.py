@@ -1,6 +1,6 @@
 # ----------------------------------------
 # Stoppuhr Webserver
-# Version: v0.44.1
+# Version: v0.44.2
 # Status: stable-beta
 # ----------------------------------------
 
@@ -57,7 +57,7 @@ from werkzeug.exceptions import HTTPException
 from xml_writer import create_xml_heats
 
 
-APP_VERSION: Final[str] = "0.44.1"
+APP_VERSION: Final[str] = "0.44.2"
 DEFAULT_PORT: Final[int] = 1999  # Since JAuswertung expected this port
 EXIT_ERROR: Final[int] = 1
 STATE_KEY: Final[str] = "STATE"
@@ -3009,15 +3009,20 @@ def _review_lane_press(st: State, item: dict[str, Any], reason: str) -> Response
         "ts": int(item["ts"]),
         "reason": reason,
         "original_lane": item.get("lane"),
+        "review_run_key": _attempt_key(
+            int(st.get("current_run") or 0), int(st.get("current_attempt") or 1)
+        ) if st.get("current_run") else None,
     }
     if isinstance(item.get("trigger_id"), str) and 0 < len(item["trigger_id"]) <= 64:
         entry["trigger_id"] = item["trigger_id"]
     pending.append(entry)
     save_state(st)
     logger.warning(
-        "Bahndruck muss manuell geprueft werden: mac=%r ts=%s grund=%s",
+        "Bahndruck muss manuell geprueft werden: mac=%r ts=%s rolle=%r lauf=%s grund=%s",
         entry["mac"],
         entry["ts"],
+        entry["original_lane"],
+        entry["review_run_key"],
         reason,
     )
     return jsonify({"ok": True, "reason": "manual_lane_review", "id": entry["id"]})
@@ -3037,6 +3042,22 @@ def _lane_review_candidates(st: State, ts: int) -> list[dict[str, Any]]:
         ]
         candidates.append({"run_key": key, "time_ms": ts - int(start["ts"]), "lanes": lanes})
     return candidates
+
+
+def _review_start_context(st: State, ts: int) -> dict[str, list[dict[str, Any]]]:
+    starts = []
+    for key, presses in (st.get("triggers_per_run") or {}).items():
+        start = (presses or {}).get(STARTER_KEY)
+        if _parse_attempt_key(key) is not None and start and isinstance(start.get("ts"), int):
+            starts.append({"run_key": key, "ts": start["ts"]})
+    before = [start for start in starts if start["ts"] <= ts]
+    after = [start for start in starts if start["ts"] > ts]
+    before_ts = max((start["ts"] for start in before), default=None)
+    after_ts = min((start["ts"] for start in after), default=None)
+    return {
+        "before": [start for start in before if start["ts"] == before_ts],
+        "after": [start for start in after if start["ts"] == after_ts],
+    }
 
 
 @app.post("/api/lane-review/resolve")
@@ -3944,11 +3965,19 @@ def api_get_run_status():
             "next_run_in_s": next_in,
             "clock_sync": _clock_sync_status(st, now_ms()),
             "unresolved_finish_presses": [
-                {**press, "candidates": _late_finish_candidates(st, int(press["ts"]), press["mac"])}
+                {
+                    **press,
+                    "candidates": _late_finish_candidates(st, int(press["ts"]), press["mac"]),
+                    "start_context": _review_start_context(st, int(press["ts"])),
+                }
                 for press in st.get("unresolved_finish_presses") or []
             ],
             "unresolved_lane_presses": [
-                {**press, "candidates": _lane_review_candidates(st, int(press["ts"]))}
+                {
+                    **press,
+                    "candidates": _lane_review_candidates(st, int(press["ts"])),
+                    "start_context": _review_start_context(st, int(press["ts"])),
+                }
                 for press in st.get("unresolved_lane_presses") or []
             ],
             "deferred_buffer_full": len(st.get("deferred_presses") or []) >= DEFERRED_MAX_COUNT

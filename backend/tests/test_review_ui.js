@@ -72,6 +72,41 @@ test("unvalued lane decision requires a reason", async () => {
   assert.equal(context.posted.body.run_key, null);
 });
 
+test("review explains lane and surrounding starts without claiming a run", () => {
+  const { elements, context } = setup();
+  context.testPresses = [{
+    id: "p", mac: "L1", ts: 15000, reason: "before_current_start", original_lane: "1",
+    review_run_key: "6/2",
+    start_context: { before: [{ run_key: "5", ts: 10000 }], after: [{ run_key: "6/2", ts: 40000 }] },
+    candidates: [{ run_key: "5", time_ms: 5000, lanes: ["1"] }],
+  }];
+  vm.runInContext("renderUnresolvedLanes(testPresses)", context);
+  let row = elements.unresolvedLaneAlerts.children[2];
+  assert.match(row.children[0].textContent, /bisherige Zuordnung: Bahn 1/);
+  assert.match(row.children[0].textContent, /Bei der Prüfung aktuell: Lauf 6\/2/);
+  assert.match(row.children[0].textContent, /Vorheriger Start: Lauf 5 um .* 5\.00 s vor dem Druck/);
+  assert.match(row.children[0].textContent, /Nächster Start: Lauf 6\/2 um .* 25\.00 s nach dem Druck/);
+  assert.match(row.children[0].textContent, /nur Orientierung/);
+  row.children[1].value = row.children[1].children[1].value;
+  row.children[2].value = "Prüfung läuft";
+  context.testPresses[0].start_context.after = [{ run_key: "7", ts: 50000 }];
+  vm.runInContext("renderUnresolvedLanes(testPresses)", context);
+  row = elements.unresolvedLaneAlerts.children[2];
+  assert.equal(row.children[1].value, row.children[1].children[1].value);
+  assert.equal(row.children[2].value, "Prüfung läuft");
+});
+
+test("older reviews and missing starts are clearly marked unknown", () => {
+  const { elements, context } = setup();
+  context.testPresses = [{ id: "p", mac: "L1", ts: 15000, reason: "role_changed",
+    start_context: { before: [], after: [] }, candidates: [] }];
+  vm.runInContext("renderUnresolvedLanes(testPresses)", context);
+  const text = elements.unresolvedLaneAlerts.children[2].children[0].textContent;
+  assert.match(text, /bisherige Zuordnung: unbekannt/);
+  assert.match(text, /für diesen älteren Fall nicht gespeichert/);
+  assert.match(text, /Keine aufgezeichneten Startzeiten/);
+});
+
 test("finish duplicate is available only for identical recorded events", async () => {
   const { elements, context } = setup();
   context.testPresses = [{

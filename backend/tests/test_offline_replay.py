@@ -327,8 +327,41 @@ class OfflineReplayTests(unittest.TestCase):
         self.assertEqual(first.json["reason"], "manual_lane_review")
         pending = self.client.get("/api/run-status").json["unresolved_lane_presses"]
         self.assertEqual(len(pending), 1)
+        self.assertEqual(pending[0]["review_run_key"], "6")
+        self.assertEqual(
+            pending[0]["start_context"],
+            {
+                "before": [{"run_key": "5", "ts": 10_000}],
+                "after": [{"run_key": "6", "ts": 40_000}],
+            },
+        )
         self.assertEqual(self.client.post("/api/triggers", json=event).json["id"], pending[0]["id"])
         self.assertEqual(self.client.post("/api/competition/end", json={}).status_code, 409)
+
+    def test_existing_reviews_get_start_context_without_guessing_original_run(self):
+        self.state["triggers_per_run"] = {
+            "5": {"starter": {"ts": 10_000, "mac": "AA"}},
+            "5/2": {"starter": {"ts": 10_000, "mac": "AA"}},
+            "6": {"starter": {"ts": 40_000, "mac": "AA"}},
+        }
+        self.state["unresolved_lane_presses"] = [
+            {"id": "p", "mac": "L1", "ts": 10_000, "reason": "role_changed", "original_lane": "1"}
+        ]
+        self.state["unresolved_finish_presses"] = [{"id": "f", "mac": "FIN", "ts": 50_000}]
+        status = self.client.get("/api/run-status").json
+        lane = status["unresolved_lane_presses"][0]
+        self.assertNotIn("review_run_key", lane)
+        self.assertEqual(
+            lane["start_context"],
+            {
+                "before": [{"run_key": "5", "ts": 10_000}, {"run_key": "5/2", "ts": 10_000}],
+                "after": [{"run_key": "6", "ts": 40_000}],
+            },
+        )
+        self.assertEqual(
+            status["unresolved_finish_presses"][0]["start_context"],
+            {"before": [{"run_key": "6", "ts": 40_000}], "after": []},
+        )
 
     def test_unassigned_deferred_press_is_preserved_when_replay_cannot_find_role(self):
         self.press("L1", 15_000)
