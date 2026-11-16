@@ -1,6 +1,6 @@
 # ----------------------------------------
 # Stoppuhr Webserver
-# Version: v0.41.23
+# Version: v0.42.0
 # Status: stable-beta
 # ----------------------------------------
 
@@ -19,8 +19,9 @@ import unicodedata
 import urllib.request
 import uuid
 from collections import defaultdict, deque
+from contextlib import contextmanager
 from dataclasses import dataclass
-from typing import Any, Final, Optional, TypedDict
+from typing import Any, Final, Iterator, NotRequired, Optional, TypedDict
 
 import archive
 import auth
@@ -56,7 +57,7 @@ from werkzeug.exceptions import HTTPException
 from xml_writer import create_xml_heats
 
 
-APP_VERSION: Final[str] = "0.41.23"
+APP_VERSION: Final[str] = "0.42.0"
 DEFAULT_PORT: Final[int] = 1999  # Since JAuswertung expected this port
 EXIT_ERROR: Final[int] = 1
 STATE_KEY: Final[str] = "STATE"
@@ -143,6 +144,11 @@ class Taster(TypedDict, total=False):
 class PressEvent(TypedDict):
     ts: int
     mac: str
+    trigger_id: NotRequired[str]
+
+
+class UnresolvedFinish(PressEvent):
+    id: str
 
 
 @dataclass(slots=True)
@@ -176,6 +182,12 @@ class State(TypedDict):
     aborted_attempts: list[str]
     abort_requests: dict[str, Any]
     starter_trigger_receipts: dict[str, Any]
+    unresolved_finish_presses: NotRequired[list[UnresolvedFinish]]
+    unresolved_lane_presses: NotRequired[list[dict[str, Any]]]
+    reviewed_lane_presses: NotRequired[list[dict[str, Any]]]
+    ignored_trigger_receipts: NotRequired[dict[str, dict[str, dict[str, Any]]]]
+    replay_pending_run: NotRequired[Optional[str]]
+    finish_resolution_receipts: NotRequired[dict[str, dict[str, Any]]]
     results: dict[int, Any]
     assignments: dict[str, Any]
     # Due to serialization, store run number always as string
@@ -225,20 +237,35 @@ def _default_state() -> State:
     }
 
 
-def load_state() -> State:
-    state = redis_store.get(STATE_KEY)
-    if state is None:
-        state = _default_state()
-        save_state(state)
-    else:
-        state = json.loads(state)
+@contextmanager
+def _measure_lock_part(name: str) -> Iterator[None]:
+    if not has_request_context() or not g.get("state_locked", False):
+        yield
+        return
+    started = time.monotonic()
+    try:
+        yield
+    finally:
+        parts = g.setdefault("state_lock_parts", {})
+        parts[name] = parts.get(name, 0.0) + (time.monotonic() - started) * 1000
 
-    return state
+
+def load_state() -> State:
+    with _measure_lock_part("zustand_laden"):
+        state = redis_store.get(STATE_KEY)
+        if state is None:
+            state = _default_state()
+            save_state(state)
+        else:
+            state = json.loads(state)
+
+        return state
 
 
 def save_state(state: State) -> None:
-    redis_store.set(STATE_KEY, json.dumps(state))
-    _notify_state_change()
+    with _measure_lock_part("zustand_speichern"):
+        redis_store.set(STATE_KEY, json.dumps(state))
+        _notify_state_change()
 
 
 def _state_change_token() -> str:
@@ -356,7 +383,8 @@ def _advance_run(st: State) -> None:
 def _maybe_advance_run(st: State) -> None:
     """Springt in den naechsten Lauf, wenn der abgeschlossene Lauf lange genug angezeigt wurde."""
     finished = st.get("run_finished_ts")
-    if finished is not None and now_ms() - int(finished) >= _auto_next_delay_ms(st):
+    if (finished is not None and not st.get("replay_pending_run")
+            and now_ms() - int(finished) >= _auto_next_delay_ms(st)):
         # Lesende Routen laufen ohne Sperre; nur das Weiterschalten sperrt und liest neu
         owner_tracked = False
         lock_started = time.monotonic()
@@ -367,7 +395,9 @@ def _maybe_advance_run(st: State) -> None:
                 path = request.path if has_request_context() else "run-advance"
                 owner_tracked = _record_state_lock_owner(method, path, lock_started)
                 fresh = load_state()
-                if fresh.get("run_finished_ts") is not None:
+                fresh_finished = fresh.get("run_finished_ts")
+                if (fresh_finished is not None and not fresh.get("replay_pending_run")
+                        and now_ms() - int(fresh_finished) >= _auto_next_delay_ms(fresh)):
                     _advance_run(fresh)
                 st.clear()
                 st.update(fresh)
@@ -507,6 +537,9 @@ _STATE_LOCK_TIMEOUT_S: Final[float] = 0.25
 _STATE_LOCK_OWNER_LOCK: Final = threading.Lock()
 _STATE_LOCK_OWNER: Optional[dict[str, Any]] = None
 _ALERT_STATE_LOCK: Final = threading.Lock()
+_VITAL_LOCKS: Final = tuple(threading.Lock() for _ in range(256))
+_CHARGER_LOCK: Final = threading.Lock()
+_TELEMETRY_LOCK_TIMEOUT_S: Final[float] = 1.0
 _UNLOCKED_PREFIXES: Final[tuple[str, ...]] = (
     "/api/startcards/reload", "/api/pi-update", "/api/cluster", "/api/system-status", "/api/wifi-config", "/api/node-names",
     "/api/firmware/releases", "/api/firmware/deploy", "/api/firmware/download",
@@ -537,12 +570,48 @@ def _clear_state_lock_owner() -> None:
             _STATE_LOCK_OWNER = None
 
 
+def _telemetry_locks_enter() -> Optional[ResponseReturnValue]:
+    if request.method != "POST":
+        return None
+    locks: tuple[threading.Lock, ...] = ()
+    if request.path == "/api/vitals":
+        payload = request.get_json(force=True, silent=True)
+        mac = payload.get("mac") if isinstance(payload, dict) else None
+        key = mac.upper() if isinstance(mac, str) else ""
+        locks = (_VITAL_LOCKS[hash(key) % len(_VITAL_LOCKS)],)
+    elif request.path == "/api/charger":
+        locks = (_CHARGER_LOCK,)
+    elif request.path == "/api/competition/end":
+        locks = (*_VITAL_LOCKS, _CHARGER_LOCK)
+    if not locks:
+        return None
+    acquired: list[threading.Lock] = []
+    g.telemetry_locks = acquired
+    deadline = time.monotonic() + _TELEMETRY_LOCK_TIMEOUT_S
+    for lock in locks:
+        if not lock.acquire(timeout=max(0.0, deadline - time.monotonic())):
+            logger.warning("API-Anfrage wegen laufender Diagnoseverarbeitung abgelehnt: %s %s",
+                           request.method, request.path)
+            response = jsonify({
+                "ok": False,
+                "error": "state_busy",
+                "message": "Die Diagnoseverarbeitung ist gerade belegt. Bitte erneut versuchen.",
+            })
+            response.headers["Retry-After"] = "1"
+            return response, 503
+        acquired.append(lock)
+    return None
+
+
 @app.before_request
 def _state_lock_enter() -> Optional[ResponseReturnValue]:
     path = request.path
     # Reine Lese-Abfragen (Browser, Taster-Displays) blockieren nicht; sie schreiben den Zustand nicht
     if request.method in ("GET", "HEAD") and path != "/api/network-status":
         return
+    telemetry_error = _telemetry_locks_enter()
+    if telemetry_error is not None:
+        return telemetry_error
     if path.startswith("/api/") and not path.startswith(_UNLOCKED_PREFIXES):
         wait_started = time.monotonic()
         if not _STATE_LOCK.acquire(timeout=_STATE_LOCK_TIMEOUT_S):
@@ -575,8 +644,7 @@ def _state_lock_enter() -> Optional[ResponseReturnValue]:
         )
 
 
-@app.teardown_request
-def _state_lock_exit(_exc: Optional[BaseException]) -> None:
+def _release_state_lock() -> None:
     if g.pop("state_locked", False):
         held_ms = (time.monotonic() - g.pop("state_lock_started")) * 1000
         wait_ms = g.pop("state_lock_wait_ms")
@@ -584,10 +652,36 @@ def _state_lock_exit(_exc: Optional[BaseException]) -> None:
             _clear_state_lock_owner()
         _STATE_LOCK.release()
         if held_ms >= 250:
+            parts = g.pop("state_lock_parts", {})
+            details = ", ".join(f"{name}={elapsed:.0f} ms" for name, elapsed in parts.items())
             logger.warning(
-                "Lang gehaltene Zustandssperre: %s %s (Wartezeit %.0f ms; gehalten %.0f ms)",
-                request.method, request.path, wait_ms, held_ms,
+                "Lang gehaltene Zustandssperre: %s %s (Wartezeit %.0f ms; gehalten %.0f ms; %s)",
+                request.method, request.path, wait_ms, held_ms, details or "keine Einzelschritte",
             )
+        else:
+            g.pop("state_lock_parts", None)
+
+
+@app.teardown_request
+def _state_lock_exit(_exc: Optional[BaseException]) -> None:
+    _release_state_lock()
+    for lock in reversed(g.pop("telemetry_locks", [])):
+        lock.release()
+
+
+@contextmanager
+def _measure_step(steps: dict[str, float], name: str) -> Iterator[None]:
+    started = time.monotonic()
+    try:
+        yield
+    finally:
+        steps[name] = (time.monotonic() - started) * 1000
+
+
+def _log_slow_telemetry(steps: dict[str, float]) -> None:
+    if sum(steps.values()) >= 250:
+        details = ", ".join(f"{name}={elapsed:.0f} ms" for name, elapsed in steps.items())
+        logger.warning("Langsame Statusverarbeitung %s: %s", request.path, details)
 
 
 class _RedisKeySessions(SecureCookieSessionInterface):
@@ -822,6 +916,12 @@ def api_set_limits() -> ResponseReturnValue:
 @app.post("/api/competition/end")
 def api_end_competition() -> ResponseReturnValue:
     st = load_state()
+    if (st.get("unresolved_finish_presses") or st.get("unresolved_lane_presses")
+            or st.get("replay_pending_run") or st.get("deferred_presses")):
+        return jsonify({
+            "ok": False,
+            "error": "Offene oder vorgemerkte Druecke bzw. Nachverarbeitung zuerst klaeren.",
+        }), 409
     payload = request.get_json(force=True, silent=True) or {}
     shutdown_tasters = payload.get("shutdown_tasters", True)
     if not isinstance(shutdown_tasters, bool):
@@ -836,6 +936,10 @@ def api_end_competition() -> ResponseReturnValue:
             return jsonify({"ok": False, "error": "invalid shutdown_grace_s setting"}), 500
 
     name = str(payload.get("name") or "").strip()[:80]
+    if not name and (st.get("reviewed_lane_presses") or st.get("finish_resolution_receipts")):
+        return jsonify(
+            {"ok": False, "error": "Zur Sicherung manueller Klaerungen einen Archivnamen angeben."}
+        ), 400
     archive_id = None
     if name:
         # Erst sichern, dann loeschen: schlaegt das Speichern fehl, bleibt der Wettkampf unveraendert
@@ -883,6 +987,13 @@ def api_end_competition() -> ResponseReturnValue:
     st["aborted_attempts"] = []
     st["abort_requests"] = {}
     st["starter_trigger_receipts"] = {}
+    st["starter_stop_events"] = {}  # type: ignore[typeddict-unknown-key]
+    st["unresolved_finish_presses"] = []
+    st["unresolved_lane_presses"] = []
+    st["reviewed_lane_presses"] = []
+    st["ignored_trigger_receipts"] = {}
+    st["finish_resolution_receipts"] = {}
+    st["replay_pending_run"] = None
     st["run_finished_ts"] = None
     save_state(st)
     _write_heats_xml(st)
@@ -928,6 +1039,7 @@ def _archive_competition(st: State, name: str) -> str:
             for key in (
                 "triggers_per_run", "finish_per_run", "finish_assign", "finish_parked", "finish_adopted",
                 "stopped_by_starter", "start_deviation", "aborted_attempts", "assignments",
+                "reviewed_lane_presses", "finish_resolution_receipts",
             )
         },
     }
@@ -1256,7 +1368,9 @@ def api_get_vitals():
 @app.post("/api/vitals")
 def api_post_vitals():
     """Update Vitals from specified MAC address."""
-    st = load_state()
+    steps: dict[str, float] = {}
+    with _measure_step(steps, "zustand_laden"):
+        st = load_state()
     payload = request.get_json(force=True, silent=True) or {}
     mac = payload.get("mac")
     if not mac:
@@ -1293,47 +1407,55 @@ def api_post_vitals():
     clock_sample = None
     if isinstance(clock_ms, (int, float)) and clock_ms > 1_700_000_000_000:
         clock_sample = (received_ts - int(clock_ms), 0)
-    save_state(st)
-    if clock_sample is not None:
-        vitals_history.add_clock_offset(
-            redis_store, str(mac), received_ts, clock_sample[0], clock_sample[1]
-        )
-    vitals_history.add(redis_store, str(mac), new_vital["ts"], dict(new_vital))
     known_taster = next((t for t in st["tasters"] if t.get("mac") == mac), None)
-    if known_taster:
-        vitals_history.set_label(redis_store, str(mac), known_taster.get("letter"))
-        device_logs.record_observations(
-            redis_store, mac, dict(new_vital),
-            limits_module.merged(st.get("settings", {}).get("limits"))["taster"],
-            _taster_log_role(st, str(mac)), new_vital["ts"],
-        )
-        if "logs" in payload:
-            device_logs.save_snapshot(
-                redis_store, "taster", mac, payload.get("fw"), payload.get("uptime_s"),
-                payload.get("logs"), new_vital["ts"],
+    rules = (
+        limits_module.merged(st.get("settings", {}).get("limits"))["taster"]
+        if known_taster else None
+    )
+    role = _taster_log_role(st, str(mac)) if known_taster else None
+    with _measure_step(steps, "zustand_speichern"):
+        save_state(st)
+    _release_state_lock()
+    if clock_sample is not None:
+        with _measure_step(steps, "uhrverlauf"):
+            vitals_history.add_clock_offset(
+                redis_store, str(mac), received_ts, clock_sample[0], clock_sample[1]
             )
+    with _measure_step(steps, "vitalverlauf"):
+        vitals_history.add(redis_store, str(mac), new_vital["ts"], dict(new_vital))
+    if known_taster and rules is not None and role is not None:
+        with _measure_step(steps, "diagnose"):
+            vitals_history.set_label(redis_store, str(mac), known_taster.get("letter"))
+            device_logs.record_observations(
+                redis_store, mac, dict(new_vital), rules, role, new_vital["ts"],
+            )
+        if "logs" in payload:
+            with _measure_step(steps, "geraetelog"):
+                device_logs.save_snapshot(
+                    redis_store, "taster", mac, payload.get("fw"), payload.get("uptime_s"),
+                    payload.get("logs"), new_vital["ts"],
+                )
+    _log_slow_telemetry(steps)
     return jsonify({"ok": True, "vital": new_vital})
 
 
 @app.post("/api/charger")
 def api_post_charger():
     """Statusmeldung der Ladeplatine des Ladekoffers (ohne Anmeldung, wie die Taster)."""
+    steps: dict[str, float] = {}
     payload = request.get_json(force=True, silent=True)
     status = ladekoffer.sanitize(payload)
     if status is None:
         return jsonify({"ok": False, "error": "invalid payload"}), 400
     # Der Server-Zeitstempel zaehlt, die Platine hat keine Uhr
     status["ts"] = now_ms()
-    if "logs" in payload:
-        device_logs.save_snapshot(
-            redis_store, "charger", status.get("mac"), status.get("fw"), status.get("uptime_s"),
-            payload.get("logs"), status["ts"],
-        )
-    ladekoffer.save(redis_store, status)
-    vitals_history.add_charger(redis_store, status["ts"], status)
+    with _measure_step(steps, "kofferstatus"):
+        ladekoffer.save(redis_store, status)
     try:
-        st = load_state()
-        reply: dict[str, Any] = {"ok": True, "wake": _wake_config(st), "beep": _beep_config(st)}
+        with _measure_step(steps, "zustand_laden"):
+            st = load_state()
+        with _measure_step(steps, "alarmstatus"):
+            reply: dict[str, Any] = {"ok": True, "wake": _wake_config(st), "beep": _beep_config(st)}
         now = status["ts"]
         if payload.get("sleep_unassigned") is True:
             grace_s = max(1, _int_setting(st, "shutdown_grace_s", 10))
@@ -1395,8 +1517,10 @@ def api_post_charger():
             {"id": pending["id"], "slot": pending["slot"]}
             if pending else None
         )
-        ota = charger_firmware.offer(redis_store, str(status.get("fw") or ""))
         reply["ota_hold_ms"] = _ota_hold_ms(st)
+        _release_state_lock()
+        with _measure_step(steps, "ota"):
+            ota = charger_firmware.offer(redis_store, str(status.get("fw") or ""))
     except redis.RedisError:
         logger.warning("Redis nicht erreichbar; Ladekoffer-Status wird nur im Arbeitsspeicher gehalten")
         st = _default_state()
@@ -1406,6 +1530,17 @@ def api_post_charger():
             "beep": {"yellow_on": 0, "yellow_seq": 0, "red_on": 0, "red_ms": 2000, "red_every_ms": 10000},
         }
         ota = None
+    finally:
+        _release_state_lock()
+    if "logs" in payload:
+        with _measure_step(steps, "geraetelog"):
+            device_logs.save_snapshot(
+                redis_store, "charger", status.get("mac"), status.get("fw"), status.get("uptime_s"),
+                payload.get("logs"), status["ts"],
+            )
+    with _measure_step(steps, "kofferverlauf"):
+        vitals_history.add_charger(redis_store, status["ts"], status)
+    _log_slow_telemetry(steps)
     if ota:
         reply["ota"] = ota
     return jsonify(reply)
@@ -2476,17 +2611,177 @@ def _lane_for_mac(st: State, mac: str) -> Optional[str]:
     return None
 
 
-def _record_finish_press(st: State, run_key: str, mac: str, ts: int) -> ResponseReturnValue:
+def _record_finish_press(
+    st: State,
+    run_key: str,
+    mac: str,
+    ts: int,
+    trigger_id: Any = None,
+    *,
+    manual: bool = False,
+    persist: bool = True,
+) -> ResponseReturnValue:
     """Sammelt einen Druck des Zieleinlauf-Tasters; ohne gestarteten Lauf wird er ignoriert."""
     presses = (st.get("triggers_per_run") or {}).get(run_key) or {}
-    if not presses.get(STARTER_KEY):
+    starter = presses.get(STARTER_KEY)
+    if not starter:
         return jsonify({"ok": True, "ignored": True, "reason": "not_started"})
+    if ts <= int(starter["ts"]):
+        return jsonify({"ok": True, "ignored": True, "reason": "before_start"})
     collected = st.setdefault("finish_per_run", {}).setdefault(run_key, [])
-    if collected and any(abs(ts - int(p["ts"])) < finish_module.DEBOUNCE_MS for p in collected):
+    if (
+        not manual
+        and collected
+        and any(abs(ts - int(p["ts"])) < finish_module.DEBOUNCE_MS for p in collected)
+    ):
         return jsonify({"ok": True, "ignored": True, "reason": "debounce"})
-    collected.append({"ts": ts, "mac": mac})
-    save_state(st)
+    press = {"ts": ts, "mac": mac}
+    if isinstance(trigger_id, str) and 0 < len(trigger_id) <= 64:
+        press["trigger_id"] = trigger_id
+    collected.append(press)
+    if persist:
+        save_state(st)
     return jsonify({"ok": True, "finish": True, "index": len(collected) - 1, "run_key": run_key})
+
+
+def _late_finish_candidates(st: State, ts: int, mac: str) -> list[dict[str, Any]]:
+    candidates = []
+    for key, presses in (st.get("triggers_per_run") or {}).items():
+        start = (presses or {}).get(STARTER_KEY)
+        if _parse_attempt_key(key) is not None and start and ts > int(start["ts"]):
+            duplicate = any(
+                press.get("mac") == mac and press.get("ts") == ts
+                for press in (st.get("finish_per_run") or {}).get(key) or []
+            )
+            candidates.append(
+                {"run_key": key, "time_ms": ts - int(start["ts"]), "duplicate": duplicate}
+            )
+    return candidates
+
+
+def _finish_or_review(
+    st: State,
+    run_key: str,
+    mac: str,
+    ts: int,
+    trigger_id: Any,
+    *,
+    persist: bool = True,
+) -> ResponseReturnValue:
+    start = ((st.get("triggers_per_run") or {}).get(run_key) or {}).get(STARTER_KEY)
+    if start and ts <= int(start["ts"]) and _late_finish_candidates(st, ts, mac):
+        pending = st.setdefault("unresolved_finish_presses", [])
+        if len(pending) >= DEFERRED_MAX_COUNT:
+            raise DeferredBufferFull()
+        item: UnresolvedFinish = {"id": uuid.uuid4().hex, "mac": mac, "ts": ts}
+        if isinstance(trigger_id, str) and 0 < len(trigger_id) <= 64:
+            item["trigger_id"] = trigger_id
+        pending.append(item)
+        save_state(st)
+        logger.warning(
+            "Verspaeteter Zieleinlaufdruck muss manuell zugeordnet werden: mac=%r ts=%s", mac, ts
+        )
+        return jsonify({"ok": True, "reason": "manual_review", "id": item["id"]})
+    return _record_finish_press(st, run_key, mac, ts, trigger_id, persist=persist)
+
+
+@app.post("/api/finish/resolve")
+def api_resolve_finish() -> ResponseReturnValue:
+    st = load_state()
+    payload = request.get_json(force=True, silent=True) or {}
+    item_id = payload.get("id")
+    run_key = payload.get("run_key")
+    action = payload.get("action", "assign")
+    note = payload.get("note")
+    if (
+        not isinstance(item_id, str)
+        or action not in ("assign", "duplicate", "park")
+        or (
+            action in ("assign", "duplicate")
+            and (not isinstance(run_key, str) or _parse_attempt_key(run_key) is None)
+        )
+        or (
+            action == "park"
+            and (run_key is not None or not isinstance(note, str) or not note.strip())
+        )
+    ):
+        return jsonify({"ok": False, "error": "Ungueltige Zuordnung."}), 400
+    pending = st.get("unresolved_finish_presses") or []
+    item = next((p for p in pending if p.get("id") == item_id), None)
+    if item is None:
+        receipt = (st.get("finish_resolution_receipts") or {}).get(item_id)
+        if (
+            receipt and receipt["run_key"] == run_key and receipt["action"] == action
+            and (action != "park" or receipt.get("note") == note.strip())
+        ):
+            return jsonify({"ok": True, **receipt})
+        if receipt:
+            return jsonify(
+                {"ok": False, "error": "Druck wurde bereits einem anderen Lauf zugeordnet."}
+            ), 409
+        return jsonify({"ok": False, "error": "Zieleinlaufdruck nicht gefunden."}), 404
+    if action == "park":
+        if len(note) > 500:
+            return jsonify({"ok": False, "error": "Begruendung ist zu lang."}), 400
+        st["unresolved_finish_presses"] = [p for p in pending if p["id"] != item["id"]]
+        receipt = {
+            "run_key": None, "index": None, "action": action, "mac": item["mac"],
+            "ts": item["ts"], "trigger_id": item.get("trigger_id"), "note": note.strip(),
+        }
+        st.setdefault("finish_resolution_receipts", {})[item_id] = receipt
+        save_state(st)
+        logger.warning("Zieleinlaufdruck manuell unbewertet dokumentiert: id=%s", item_id)
+        return jsonify({"ok": True, **receipt})
+    start = ((st.get("triggers_per_run") or {}).get(run_key) or {}).get(STARTER_KEY)
+    if not start or int(item["ts"]) <= int(start["ts"]):
+        return jsonify(
+            {"ok": False, "error": "Der Druck liegt nicht nach dem Start dieses Laufs."}
+        ), 400
+    existing = (st.get("finish_per_run") or {}).get(run_key) or []
+    duplicate_index = next(
+        (
+            i
+            for i, press in enumerate(existing)
+            if press.get("mac") == item["mac"] and press.get("ts") == item["ts"]
+        ),
+        None,
+    )
+    if action == "duplicate" and duplicate_index is None:
+        return jsonify(
+            {"ok": False, "error": "Kein identischer Zieleinlaufdruck in diesem Lauf vorhanden."}
+        ), 400
+    st["unresolved_finish_presses"] = [p for p in pending if p["id"] != item["id"]]
+    index = duplicate_index if action == "duplicate" else len(existing)
+    receipt = {
+        "run_key": run_key,
+        "index": index,
+        "action": action,
+        "mac": item["mac"],
+        "ts": item["ts"],
+        "trigger_id": item.get("trigger_id"),
+    }
+    st.setdefault("finish_resolution_receipts", {})[item_id] = receipt
+    if action == "duplicate":
+        save_state(st)
+        logger.warning(
+            "Verspaeteter Zieleinlaufdruck manuell als Duplikat von Lauf %s bestaetigt", run_key
+        )
+        return jsonify({"ok": True, **receipt})
+    response = app.make_response(
+        _record_finish_press(
+            st, run_key, item["mac"], int(item["ts"]), item.get("trigger_id"), manual=True
+        )
+    )
+    data = response.get_json(silent=True) or {}
+    if not data.get("finish"):
+        return jsonify(
+            {
+                "ok": False,
+                "error": "Zieleinlaufdruck konnte nicht zugeordnet werden.",
+            }
+        ), 409
+    logger.warning("Verspaeteter Zieleinlaufdruck manuell Lauf %s zugeordnet", run_key)
+    return response
 
 
 def _finish_info(st: State, run_key: str) -> Optional[dict[str, Any]]:
@@ -2613,36 +2908,295 @@ def api_post_finish_transfer():
     return jsonify({"ok": True, "label": _attempt_key(parsed[0], versions[-1]["attempt"]) if versions else None})
 
 
-DEFERRED_MAX_AGE_MS: Final[int] = 15 * 60 * 1000  # Vorgemerkte Bahn-Druecke verfallen danach
 DEFERRED_MAX_COUNT: Final[int] = 200
 
 
-def _defer_press(st: State, mac: str, raw_ts: Any) -> None:
-    """Merkt einen Bahn-Druck vor, der vor dem passenden Start eintrifft (Zustellung ohne Pi nachgeholt).
+class DeferredBufferFull(Exception):
+    pass
+
+
+@app.errorhandler(DeferredBufferFull)
+def _deferred_buffer_full(_error: DeferredBufferFull) -> ResponseReturnValue:
+    logger.error("Vormerkpuffer voll: Tastendruck nicht angenommen; Taster muss erneut senden")
+    response = jsonify(
+        {
+            "ok": False,
+            "error": "deferred_buffer_full",
+            "message": "Vormerkpuffer voll. Wettkampf unterbrechen und Druecke pruefen.",
+        }
+    )
+    response.headers["Retry-After"] = "1"
+    return response, 503
+
+
+def _defer_press(
+    st: State, mac: str, raw_ts: Any, trigger_id: Any = None, *, lane: Optional[str] = None,
+) -> None:
+    """Merkt einen Druck vor, der vor dem passenden Start eintrifft (Zustellung ohne Pi nachgeholt).
 
     Jeder Taster hat seine eigene Warteschlange; nach einem Pi-Ausfall kann der Stopp einer Bahn
     vor dem Start des Starters ankommen. Er wird nach dem Start nach Zeitstempel eingeordnet.
     """
-    now = now_ms()
-    kept = [
-        d for d in (st.get("deferred_presses") or [])
-        if now - int(d.get("recv", 0)) < DEFERRED_MAX_AGE_MS
-        and not (d["mac"] == mac and d["ts"] == raw_ts)
-    ]
-    kept.append({"mac": mac, "ts": raw_ts, "recv": now})
-    st["deferred_presses"] = kept[-DEFERRED_MAX_COUNT:]  # type: ignore[typeddict-unknown-key]
+    kept = list(st.get("deferred_presses") or [])
+    if len(kept) >= DEFERRED_MAX_COUNT:
+        raise DeferredBufferFull()
+    item = {"mac": mac, "ts": raw_ts, "recv": now_ms()}
+    if lane is None:
+        lane = _lane_for_mac(st, mac)
+    if lane is not None:
+        item["lane"] = lane
+    if isinstance(trigger_id, str) and 0 < len(trigger_id) <= 64:
+        item["trigger_id"] = trigger_id
+    kept.append(item)
+    st["deferred_presses"] = kept  # type: ignore[typeddict-unknown-key]
+
+
+def _remember_starter_event(
+    st: State,
+    payload: dict[str, Any],
+    run_key: str,
+    response: dict[str, Any],
+) -> None:
+    mac, trigger_id, ts = payload.get("mac"), payload.get("trigger_id"), payload.get("ts")
+    if isinstance(mac, str) and isinstance(trigger_id, str) and 0 < len(trigger_id) <= 64:
+        st.setdefault("starter_trigger_receipts", {})[mac] = {
+            "trigger_id": trigger_id,
+            "ts": ts,
+            "run_key": run_key,
+            "response": response,
+        }
+
+
+def _ignored_press(
+    st: State, payload: dict[str, Any], reason: str, run_key: str
+) -> ResponseReturnValue:
+    response = {"ok": True, "ignored": True, "reason": reason}
+    mac, trigger_id = payload.get("mac"), payload.get("trigger_id")
+    if isinstance(mac, str) and isinstance(trigger_id, str) and 0 < len(trigger_id) <= 64:
+        st.setdefault("ignored_trigger_receipts", {}).setdefault(mac, {})[trigger_id] = {
+            "ts": payload.get("ts"),
+            "response": response,
+        }
+        if _lane_for_mac(st, mac) == STARTER_KEY:
+            _remember_starter_event(st, payload, run_key, response)
+        save_state(st)
+    return jsonify(response)
+
+
+def _review_lane_press(st: State, item: dict[str, Any], reason: str) -> ResponseReturnValue:
+    pending = st.setdefault("unresolved_lane_presses", [])
+    if len(pending) >= DEFERRED_MAX_COUNT:
+        raise DeferredBufferFull()
+    entry = {
+        "id": uuid.uuid4().hex,
+        "mac": item["mac"],
+        "ts": int(item["ts"]),
+        "reason": reason,
+        "original_lane": item.get("lane"),
+    }
+    if isinstance(item.get("trigger_id"), str) and 0 < len(item["trigger_id"]) <= 64:
+        entry["trigger_id"] = item["trigger_id"]
+    pending.append(entry)
+    save_state(st)
+    logger.warning(
+        "Bahndruck muss manuell geprueft werden: mac=%r ts=%s grund=%s",
+        entry["mac"],
+        entry["ts"],
+        reason,
+    )
+    return jsonify({"ok": True, "reason": "manual_lane_review", "id": entry["id"]})
+
+
+def _lane_review_candidates(st: State, ts: int) -> list[dict[str, Any]]:
+    candidates: list[dict[str, Any]] = []
+    for key, presses in (st.get("triggers_per_run") or {}).items():
+        parsed = _parse_attempt_key(key)
+        start = (presses or {}).get(STARTER_KEY)
+        if not parsed or not start or ts <= int(start["ts"]):
+            continue
+        lanes = [
+            str(card["Bahn"])
+            for card in (st.get("startcards_per_run") or {}).get(str(parsed[0]), [])
+            if card.get("Bahn") is not None and not presses.get(str(card["Bahn"]))
+        ]
+        candidates.append({"run_key": key, "time_ms": ts - int(start["ts"]), "lanes": lanes})
+    return candidates
+
+
+@app.post("/api/lane-review/resolve")
+def api_resolve_lane_review() -> ResponseReturnValue:
+    st = load_state()
+    payload = request.get_json(force=True, silent=True) or {}
+    item_id = payload.get("id")
+    action = payload.get("action")
+    if not isinstance(item_id, str) or action not in ("assign", "finish", "park"):
+        return jsonify({"ok": False, "error": "Ungueltige Klaerung."}), 400
+    pending = st.get("unresolved_lane_presses") or []
+    item = next((p for p in pending if p.get("id") == item_id), None)
+    if item is None:
+        previous = next(
+            (p for p in st.get("reviewed_lane_presses") or [] if p.get("id") == item_id), None
+        )
+        note_value = payload.get("note")
+        if (
+            previous
+            and isinstance(note_value, str)
+            and previous.get("note") == note_value.strip()
+            and all(previous.get(k) == payload.get(k) for k in ("action", "run_key", "lane"))
+        ):
+            if previous.get("action") in ("assign", "finish"):
+                _write_heats_xml(st)
+            return jsonify({"ok": True, "reviewed": True})
+        return jsonify(
+            {"ok": False, "error": "Druck nicht gefunden oder bereits anders geklaert."}
+        ), 409
+    run_key = payload.get("run_key")
+    lane = payload.get("lane")
+    note = payload.get("note")
+    if not isinstance(note, str) or not note.strip() or len(note) > 500:
+        return jsonify(
+            {"ok": False, "error": "Begruendung fuer die manuelle Klaerung angeben."}
+        ), 400
+    if action in ("assign", "finish"):
+        if not isinstance(run_key, str):
+            return jsonify({"ok": False, "error": "Lauf auswaehlen."}), 400
+        candidate = next(
+            (c for c in _lane_review_candidates(st, int(item["ts"])) if c["run_key"] == run_key),
+            None,
+        )
+        if (action == "finish" and lane is not None) or candidate is None or (
+            action == "assign" and (not isinstance(lane, str) or lane not in candidate["lanes"])
+        ):
+            return jsonify({"ok": False, "error": "Lauf oder freie Bahn ist ungueltig."}), 400
+    elif run_key is not None or lane is not None:
+        return jsonify(
+            {"ok": False, "error": "Unbewerteter Druck darf keinen Lauf und keine Bahn erhalten."}
+        ), 400
+    reviewed = {
+        **item,
+        "action": action,
+        "run_key": run_key,
+        "lane": lane,
+        "note": note.strip(),
+        "reviewed_ts": now_ms(),
+    }
+    st["unresolved_lane_presses"] = [p for p in pending if p["id"] != item_id]
+    st.setdefault("reviewed_lane_presses", []).append(reviewed)
+    if action == "assign":
+        press: PressEvent = {"mac": item["mac"], "ts": int(item["ts"])}
+        if item.get("trigger_id"):
+            press["trigger_id"] = item["trigger_id"]
+        st["triggers_per_run"][run_key][lane] = press
+        current_key = _attempt_key(int(st["current_run"]), int(st.get("current_attempt") or 1))
+        if current_key == run_key and st.get("run_finished_ts") is None:
+            cards = (st.get("startcards_per_run") or {}).get(str(st["current_run"]), [])
+            lanes = [str(c["Bahn"]) for c in cards]
+            mapping = (st.get("assignments") or {}).get("mapping") or {}
+            expected = [n for n in lanes if mapping.get(n)] or lanes
+            if expected and all(st["triggers_per_run"][run_key].get(n) for n in expected):
+                st["run_finished_ts"] = now_ms()
+                st.setdefault("run_done_event_ts", {})[run_key] = max(  # type: ignore[typeddict-unknown-key]
+                    int(p["ts"])
+                    for lane_key, p in st["triggers_per_run"][run_key].items()
+                    if lane_key != STARTER_KEY and p
+                )
+        save_state(st)
+        _write_heats_xml(st)
+    elif action == "finish":
+        response = _record_finish_press(
+            st,
+            run_key,
+            item["mac"],
+            int(item["ts"]),
+            item.get("trigger_id"),
+            manual=True,
+            persist=False,
+        )
+        current_key = _attempt_key(int(st["current_run"]), int(st.get("current_attempt") or 1))
+        completed = False
+        if (
+            run_key == current_key
+            and st.get("run_finished_ts") is None
+            and str(st.get("settings", {}).get("starter_is_finish", "0")) == "1"
+        ):
+            needed = len((st.get("startcards_per_run") or {}).get(str(st["current_run"]), []))
+            collected = (st.get("finish_per_run") or {}).get(run_key) or []
+            if needed and len(collected) >= needed:
+                st["run_finished_ts"] = now_ms()
+                st.setdefault("run_done_event_ts", {})[run_key] = max(  # type: ignore[typeddict-unknown-key]
+                    int(p["ts"]) for p in collected
+                )
+                completed = True
+        save_state(st)
+        if completed:
+            _write_heats_xml(st)
+        logger.warning(
+            "Druck manuell dem Zieleinlauf von Lauf %s zugeordnet: id=%s", run_key, item_id
+        )
+        return response
+    else:
+        save_state(st)
+    logger.warning(
+        "Bahndruck manuell geklaert: id=%s aktion=%s lauf=%s bahn=%s",
+        item_id,
+        action,
+        run_key,
+        lane,
+    )
+    return jsonify({"ok": True, "reviewed": True})
 
 
 def _replay_deferred(st: State) -> None:
-    """Spielt vorgemerkte Bahn-Druecke nach einem Start in Zeitreihenfolge ein."""
+    """Spielt vorgemerkte Druecke nach einem Start in Zeitreihenfolge ein."""
     pending = sorted(st.get("deferred_presses") or [], key=lambda d: int(d["ts"]))
-    st["deferred_presses"] = []  # type: ignore[typeddict-unknown-key]
-    save_state(st)
     for d in pending:
-        try:
-            _handle_trigger(st, {"mac": d["mac"], "ts": d["ts"]}, replay=True)
-        except HTTPException:
+        remaining = list(st.get("deferred_presses") or [])
+        if d not in remaining:
             continue
+        remaining.remove(d)
+        st["deferred_presses"] = remaining  # type: ignore[typeddict-unknown-key]
+        replay_payload = {"mac": d["mac"], "ts": d["ts"]}
+        if "trigger_id" in d:
+            replay_payload["trigger_id"] = d["trigger_id"]
+        original_lane = d.get("lane")
+        if original_lane and _lane_for_mac(st, d["mac"]) != original_lane:
+            _review_lane_press(st, d, "role_changed")
+            continue
+        try:
+            result = app.make_response(_handle_trigger(st, replay_payload, replay=True))
+        except HTTPException as exc:
+            if not 400 <= (exc.code or 500) < 500:
+                raise
+            result = app.make_response(exc)
+        if 400 <= result.status_code < 500:
+            _review_lane_press(st, d, f"replay_http_{result.status_code}")
+            continue
+        if result.status_code >= 400:
+            logger.error(
+                "Vorgemerkter Tastendruck konnte nicht verarbeitet werden: mac=%r ts=%s HTTP %s",
+                d["mac"], d["ts"], result.status_code,
+            )
+            raise RuntimeError("Vorgemerkter Tastendruck konnte nicht verarbeitet werden")
+        save_state(st)
+
+
+def _resume_pending_replay(st: State, run_key: str) -> None:
+    if run_key in (st.get("run_done_event_ts") or {}):
+        _write_heats_xml(st)
+    _replay_deferred(st)
+    st["replay_pending_run"] = None
+    save_state(st)
+
+
+@app.post("/api/replay/resume")
+def api_resume_replay() -> ResponseReturnValue:
+    st = load_state()
+    run_key = st.get("replay_pending_run")
+    if not run_key or not ((st.get("triggers_per_run") or {}).get(run_key) or {}).get(STARTER_KEY):
+        return jsonify({"ok": False, "error": "Keine fortsetzbare Nachverarbeitung gefunden."}), 409
+    _resume_pending_replay(st, run_key)
+    logger.warning("Nachverarbeitung von Lauf %s manuell fortgesetzt", run_key)
+    return jsonify({"ok": True, "run_key": run_key})
 
 
 def _handle_trigger(st: State, payload: dict[str, Any], replay: bool = False):
@@ -2682,6 +3236,8 @@ def _handle_trigger(st: State, payload: dict[str, Any], replay: bool = False):
             return jsonify({"ok": True, "ignored": True, "reason": "range_test"})
         lane = _lane_for_mac(st, mac_norm)
     if lane is None:
+        if replay:
+            return jsonify({"ok": False, "error": "deferred role missing"}), 400
         swapped = _try_pending_swap(st, mac_norm)
         if swapped == "waiting":
             return jsonify({"ok": True, "ignored": True, "reason": "swap_waiting_for_run_end"})
@@ -2690,8 +3246,26 @@ def _handle_trigger(st: State, payload: dict[str, Any], replay: bool = False):
             return jsonify({"ok": True, "swapped": True, "lane": swapped})
         return jsonify({"ok": False, "error": f"no lane found for mac {mac_norm}"}), 400
 
+    if lane == STARTER_KEY:
+        previous = (st.get("triggers_per_run") or {}).get(current_key, {}).get(STARTER_KEY)
+        if (previous and previous.get("mac") == mac_norm and int(previous["ts"]) == ts_val
+                and st.get("replay_pending_run") == current_key and not replay):
+            _resume_pending_replay(st, current_key)
+            return jsonify({
+                "ok": True,
+                "press": {
+                    **previous, "run": current_run, "attempt": current_attempt,
+                    "run_key": current_key, "lane": STARTER_KEY,
+                },
+            })
+
     if lane == FINISH_KEY:
-        return _record_finish_press(st, current_key, mac_norm, ts_val)
+        started = (st.get("triggers_per_run") or {}).get(current_key, {}).get(STARTER_KEY)
+        if not started and not replay and test_lane is None and payload.get("ts") is not None:
+            _defer_press(st, mac_norm, ts_val, payload.get("trigger_id"))
+            save_state(st)
+            return jsonify({"ok": True, "deferred": True, "reason": "run_not_started"})
+        return _finish_or_review(st, current_key, mac_norm, ts_val, payload.get("trigger_id"))
 
     # Kombirolle Starter/Zieleinlauf: der erste Druck startet, jeder weitere ist ein Zieleinlauf-Druck
     # (auch kurz nach dem Lauf-Ende, damit der letzte Anschlag nicht den naechsten Lauf startet)
@@ -2705,14 +3279,22 @@ def _handle_trigger(st: State, payload: dict[str, Any], replay: bool = False):
         else:
             recently_done = done_ts is not None and now_ms() - int(done_ts) < STARTER_FINISH_GRACE_MS
         if started and (done_ts is None or recently_done):
-            resp = _record_finish_press(st, current_key, mac_norm, ts_val)
+            resp = app.make_response(_finish_or_review(
+                st, current_key, mac_norm, ts_val, payload.get("trigger_id"), persist=False,
+            ))
+            finish_data = resp.get_json(silent=True) or {}
             # Alle Uhren gestoppt (so viele Zieleinlauf-Druecke wie Bahnen): Lauf ist beendet
             needed = len((st.get("startcards_per_run") or {}).get(str(current_run), []))
             collected = (st.get("finish_per_run") or {}).get(current_key) or []
             if st.get("run_finished_ts") is None and needed and len(collected) >= needed:
                 st["run_finished_ts"] = now_ms()
-                st.setdefault("run_done_event_ts", {})[current_key] = ts_val  # type: ignore[typeddict-unknown-key]
+                st.setdefault("run_done_event_ts", {})[current_key] = max(  # type: ignore[typeddict-unknown-key]
+                    int(p["ts"]) for p in collected
+                )
+            if finish_data.get("finish"):
+                _remember_starter_event(st, payload, current_key, finish_data)
                 save_state(st)
+            if finish_data.get("finish") and st.get("run_finished_ts") is not None:
                 _write_heats_xml(st)
             return resp
 
@@ -2742,14 +3324,22 @@ def _handle_trigger(st: State, payload: dict[str, Any], replay: bool = False):
             for late_lane, late_press in late.items():
                 raw_ts = int(late_press["ts"])
                 old_presses[late_lane] = None
-                _defer_press(st, late_press["mac"], raw_ts)
+                _defer_press(
+                    st, late_press["mac"], raw_ts, late_press.get("trigger_id"), lane=late_lane
+                )
             st["triggers_per_run"][current_key] = old_presses
             stopped = set(st.get("stopped_by_starter") or [])
             stopped.add(current_key)
             st["stopped_by_starter"] = sorted(stopped)
             st.setdefault("starter_stop_ts", {})[current_key] = ts_val  # type: ignore[typeddict-item]
+            st.setdefault("run_done_event_ts", {})[current_key] = ts_val  # type: ignore[typeddict-unknown-key]
+            stop_response = {"ok": True, "stopped": True, "run_key": current_key}
+            _remember_starter_event(st, payload, current_key, stop_response)
+            st.setdefault("starter_stop_events", {})[current_key] = {  # type: ignore[typeddict-unknown-key]
+                "mac": mac_norm, "ts": ts_val, "trigger_id": payload.get("trigger_id"),
+            }
             save_state(st)
-            return jsonify({"ok": True, "stopped": True, "run_key": current_key})
+            return jsonify(stop_response)
         _advance_run(st)
         current_run = st["current_run"]
         current_attempt = int(st.get("current_attempt") or 1)
@@ -2762,11 +3352,12 @@ def _handle_trigger(st: State, payload: dict[str, Any], replay: bool = False):
     first_start = triggers_per_run[current_key].get(STARTER_KEY) if lane == STARTER_KEY else None
     if first_start:
         if ts_val - int(first_start["ts"]) < STARTER_STOP_MIN_MS:
-            return jsonify({"ok": True, "ignored": True, "reason": "double_press_too_fast"})
+            return _ignored_press(st, payload, "double_press_too_fast", current_key)
         stopped = set(st.get("stopped_by_starter") or [])
         stopped.add(current_key)
         st["stopped_by_starter"] = sorted(stopped)
         st.setdefault("starter_stop_ts", {})[current_key] = ts_val  # type: ignore[typeddict-item]
+        st.setdefault("run_done_event_ts", {})[current_key] = ts_val  # type: ignore[typeddict-unknown-key]
         st["run_finished_ts"] = now_ms()
         # Bahn-Stopps nach dem Lauf-Ende (nach Pi-Ausfall vor dem Starter-Stopp eingetroffen)
         # gehoeren zum naechsten Lauf
@@ -2775,12 +3366,19 @@ def _handle_trigger(st: State, payload: dict[str, Any], replay: bool = False):
                 continue
             raw_ts = int(late_press["ts"])
             triggers_per_run[current_key][late_lane] = None
-            _defer_press(st, late_press["mac"], raw_ts)
+            _defer_press(
+                st, late_press["mac"], raw_ts, late_press.get("trigger_id"), lane=late_lane
+            )
         st["triggers_per_run"] = triggers_per_run
+        stop_response = {"ok": True, "stopped": True, "run_key": current_key}
+        _remember_starter_event(st, payload, current_key, stop_response)
+        st.setdefault("starter_stop_events", {})[current_key] = {  # type: ignore[typeddict-unknown-key]
+            "mac": mac_norm, "ts": ts_val, "trigger_id": payload.get("trigger_id"),
+        }
         save_state(st)
         _write_heats_xml(st)
         logger.info(f"Run {current_key} stopped by second starter press")
-        return jsonify({"ok": True, "stopped": True, "run_key": current_key})
+        return jsonify(stop_response)
     triggers_per_run[current_key].setdefault(lane, None)
     # Abort press if the run has not been started yet.
     if lane != STARTER_KEY and not any(
@@ -2792,7 +3390,7 @@ def _handle_trigger(st: State, payload: dict[str, Any], replay: bool = False):
             pre[lane] = ts_val
             if test_lane is None and payload.get("ts") is not None:
                 # Der Start kann noch kommen (Zustellung nach Pi-Ausfall): nach dem Start einordnen
-                _defer_press(st, mac_norm, int(payload["ts"]))
+                _defer_press(st, mac_norm, int(payload["ts"]), payload.get("trigger_id"))
                 save_state(st)
                 return jsonify({"ok": True, "deferred": True, "reason": "run_not_started"})
             save_state(st)
@@ -2801,39 +3399,55 @@ def _handle_trigger(st: State, payload: dict[str, Any], replay: bool = False):
     if lane != STARTER_KEY and test_lane is None and lane in lanes_in_run and st.get("run_finished_ts") is not None:
         stop_ts = (st.get("starter_stop_ts") or {}).get(current_key)
         if triggers_per_run[current_key].get(lane) or (stop_ts is not None and ts_val > int(stop_ts)):
-            _defer_press(st, mac_norm, int(payload.get("ts", ts_val)))
+            _defer_press(st, mac_norm, int(payload.get("ts", ts_val)), payload.get("trigger_id"))
             save_state(st)
             return jsonify({"ok": True, "deferred": True, "reason": "next_run_not_started"})
     # Stopp-Sperre: Bahn-Signale kurz nach dem Start werden ignoriert (z. B. Fehlausloesungen)
     if lane != STARTER_KEY:
         starter_press = triggers_per_run[current_key].get(STARTER_KEY)
         lockout_ms = _stop_lockout_ms(st)
+        if starter_press and ts_val < int(starter_press["ts"]):
+            if any(
+                p.get(STARTER_KEY) and int(p[STARTER_KEY]["ts"]) < ts_val
+                for key, p in (st.get("triggers_per_run") or {}).items() if key != current_key
+            ):
+                return _review_lane_press(st, {
+                    "mac": mac_norm, "ts": ts_val, "lane": lane,
+                    "trigger_id": payload.get("trigger_id"),
+                }, "before_current_start")
         if starter_press and ts_val < int(starter_press["ts"]) - START_DEVIATION_WINDOW_MS:
-            return jsonify({"ok": True, "ignored": True, "reason": "before_start"})
+            return _ignored_press(st, payload, "before_start", current_key)
         if starter_press and ts_val - int(starter_press["ts"]) < lockout_ms:
             logger.info(f"Stop signal of lane {lane} ignored (lockout {lockout_ms} ms)")
             if lane in lanes_in_run:
                 dev = st.setdefault("start_deviation", {}).setdefault(current_key, {})  # type: ignore[typeddict-item]
                 dev.setdefault(lane, ts_val - int(starter_press["ts"]))
-                save_state(st)
-            return jsonify({"ok": True, "ignored": True, "reason": "stop_lockout"})
+                if not (isinstance(payload.get("mac"), str)
+                        and isinstance(payload.get("trigger_id"), str)
+                        and 0 < len(payload["trigger_id"]) <= 64):
+                    save_state(st)
+            return _ignored_press(st, payload, "stop_lockout", current_key)
     # Abort double press
     if triggers_per_run[current_key][lane]:
         first_ts = int(triggers_per_run[current_key][lane]["ts"])
         if lane != STARTER_KEY and test_lane is None and payload.get("ts") is not None \
                 and ts_val - first_ts > START_DEVIATION_WINDOW_MS:
             # Zweiter Druck dieser Bahn viel spaeter: gehoert zum naechsten Lauf, dessen Starter-Stopp/Start fehlt noch
-            _defer_press(st, mac_norm, int(payload["ts"]))
+            _defer_press(st, mac_norm, int(payload["ts"]), payload.get("trigger_id"))
             save_state(st)
             return jsonify({"ok": True, "deferred": True, "reason": "next_run_not_started"})
         return jsonify({"ok": False, "error": "Double press detected."}), 400
     # Reject lanes which are not in the current run, except STARTER
     if lane != STARTER_KEY and lane not in lanes_in_run:
+        logger.warning("Tastendruck abgelehnt: Bahn %r nicht in Lauf %s", lane, current_key)
         abort(400, description=f"Lane {lane} is not in the current run.")
     press: PressEvent = {
         "ts": ts_val,
         "mac": mac_norm,
     }
+    trigger_id = payload.get("trigger_id")
+    if isinstance(trigger_id, str) and 0 < len(trigger_id) <= 64:
+        press["trigger_id"] = trigger_id
 
     triggers_per_run[current_key][lane] = press
     st["triggers_per_run"] = triggers_per_run
@@ -2844,21 +3458,35 @@ def _handle_trigger(st: State, payload: dict[str, Any], replay: bool = False):
             if 0 < ts_val - int(pre_ts) <= START_DEVIATION_WINDOW_MS:
                 dev = st.setdefault("start_deviation", {}).setdefault(current_key, {})  # type: ignore[typeddict-item]
                 dev.setdefault(pre_lane, int(pre_ts) - ts_val)
-    save_state(st)
-    if lane == STARTER_KEY:
-        vitals_history.add_start(redis_store, ts_val, current_key)
+        if st.get("deferred_presses"):
+            st["replay_pending_run"] = current_key
+        _remember_starter_event(st, payload, current_key, {"ok": True, "press": {
+            **press, "run": current_run, "attempt": current_attempt,
+            "run_key": current_key, "lane": STARTER_KEY,
+        }})
     # Check, if for all lanes presses have been received (Bahnen ohne Taster werden nicht erwartet)
     mapping = (st.get("assignments") or {}).get("mapping") or {}
     expected = [l for l in lanes_in_run if mapping.get(l)] or lanes_in_run
-    if expected and all(triggers_per_run[current_key].get(lane) for lane in expected):
+    completed = bool(expected) and all(triggers_per_run[current_key].get(lane) for lane in expected)
+    if completed:
         logger.info(f"All lanes have been pressed in run {current_key}")
-        _write_heats_xml(st)
         # Nach der eingestellten Wartezeit in den naechsten Lauf wechseln
         st["run_finished_ts"] = now_ms()
-        st.setdefault("run_done_event_ts", {})[current_key] = ts_val  # type: ignore[typeddict-unknown-key]
+        st.setdefault("run_done_event_ts", {})[current_key] = max(  # type: ignore[typeddict-unknown-key]
+            int(p["ts"])
+            for lane_key, p in triggers_per_run[current_key].items()
+            if lane_key != STARTER_KEY and p
+        )
     save_state(st)
+    if lane == STARTER_KEY:
+        vitals_history.add_start(redis_store, ts_val, current_key)
+    if completed:
+        _write_heats_xml(st)
     if lane == STARTER_KEY and not replay:
         _replay_deferred(st)
+        if st.get("replay_pending_run") == current_key:
+            st["replay_pending_run"] = None
+            save_state(st)
     return jsonify(
         {
             "ok": True,
@@ -2879,13 +3507,121 @@ def api_post_triggers():
     payload = request.get_json(force=True, silent=True) or {}
     mac = payload.get("mac")
     trigger_id = payload.get("trigger_id")
+    replay_key = st.get("replay_pending_run")
+    if replay_key:
+        start = ((st.get("triggers_per_run") or {}).get(replay_key) or {}).get(STARTER_KEY)
+        if (
+            not start
+            or start.get("mac") != mac
+            or start.get("ts") != payload.get("ts")
+            or (start.get("trigger_id") and start.get("trigger_id") != trigger_id)
+        ):
+            logger.error(
+                "Nachverarbeitung von Lauf %s noch offen; neuer Druck muss erneut gesendet werden",
+                replay_key,
+            )
+            return jsonify({"ok": False, "error": "replay_incomplete"}), 503
     if isinstance(mac, str) and isinstance(trigger_id, str) and 0 < len(trigger_id) <= 64:
+        ignored = ((st.get("ignored_trigger_receipts") or {}).get(mac) or {}).get(trigger_id)
+        if ignored:
+            if payload.get("ts") != ignored.get("ts"):
+                return jsonify({"ok": False, "error": "trigger_id_conflict"}), 422
+            return jsonify(ignored["response"])
         receipts = st.setdefault("starter_trigger_receipts", {})
         existing = receipts.get(mac)
-        if existing and existing.get("trigger_id") == trigger_id:
+        if existing and existing.get("trigger_id") == trigger_id and not replay_key:
+            if "ts" in existing and payload.get("ts") != existing["ts"]:
+                return jsonify({"ok": False, "error": "trigger_id_conflict"}), 422
+            if existing.get("response", {}).get("stopped"):
+                _write_heats_xml(st)
             return jsonify(existing["response"])
+        for key, press in (st.get("starter_stop_events") or {}).items():
+            if press.get("mac") == mac and press.get("trigger_id") == trigger_id:
+                if payload.get("ts") != press.get("ts"):
+                    return jsonify({"ok": False, "error": "trigger_id_conflict"}), 422
+                _write_heats_xml(st)
+                return jsonify({"ok": True, "stopped": True, "run_key": key})
+        for key, presses in (st.get("triggers_per_run") or {}).items():
+            for lane, press in presses.items():
+                if not press or press.get("mac") != mac or press.get("trigger_id") != trigger_id:
+                    continue
+                if payload.get("ts") != press.get("ts"):
+                    logger.error(
+                        "Tastendruck-ID mit abweichender Zeit: mac=%r trigger_id=%r",
+                        mac[:32],
+                        trigger_id,
+                    )
+                    return jsonify({"ok": False, "error": "trigger_id_conflict"}), 422
+                if replay_key and key == replay_key and lane == STARTER_KEY:
+                    break
+                parsed = _parse_attempt_key(key)
+                if parsed is None:
+                    logger.error("Ungueltiger Lauf in gespeichertem Tastendruck: %r", key)
+                    return jsonify({"ok": False, "error": "invalid_recorded_run"}), 500
+                if key in (st.get("run_done_event_ts") or {}):
+                    _write_heats_xml(st)
+                return jsonify(
+                    {
+                        "ok": True,
+                        "press": {
+                            **press,
+                            "run": parsed[0],
+                            "attempt": parsed[1],
+                            "run_key": key,
+                            "lane": lane,
+                        },
+                    }
+                )
+        for press in st.get("deferred_presses") or []:
+            if press.get("mac") == mac and press.get("trigger_id") == trigger_id:
+                if payload.get("ts") != press.get("ts"):
+                    logger.error(
+                        "Vorgemerkte Tastendruck-ID mit abweichender Zeit: mac=%r id=%r",
+                        mac[:32],
+                        trigger_id,
+                    )
+                    return jsonify({"ok": False, "error": "trigger_id_conflict"}), 422
+                return jsonify({"ok": True, "deferred": True, "reason": "already_deferred"})
+        for press in st.get("unresolved_finish_presses") or []:
+            if press["mac"] == mac and press.get("trigger_id") == trigger_id:
+                if payload.get("ts") != press["ts"]:
+                    return jsonify({"ok": False, "error": "trigger_id_conflict"}), 422
+                return jsonify({"ok": True, "reason": "manual_review", "id": press["id"]})
+        for press in st.get("unresolved_lane_presses") or []:
+            if press["mac"] == mac and press.get("trigger_id") == trigger_id:
+                if payload.get("ts") != press["ts"]:
+                    return jsonify({"ok": False, "error": "trigger_id_conflict"}), 422
+                return jsonify({"ok": True, "reason": "manual_lane_review", "id": press["id"]})
+        for press in st.get("reviewed_lane_presses") or []:
+            if press["mac"] == mac and press.get("trigger_id") == trigger_id:
+                if payload.get("ts") != press["ts"]:
+                    return jsonify({"ok": False, "error": "trigger_id_conflict"}), 422
+                return jsonify(
+                    {"ok": True, "reason": "lane_reviewed", "run_key": press.get("run_key")}
+                )
+        for receipt in (st.get("finish_resolution_receipts") or {}).values():
+            if receipt.get("mac") == mac and receipt.get("trigger_id") == trigger_id:
+                if payload.get("ts") != receipt.get("ts"):
+                    return jsonify({"ok": False, "error": "trigger_id_conflict"}), 422
+                return jsonify({
+                    "ok": True, "finish": receipt.get("action") != "park",
+                    "reason": "finish_reviewed", "run_key": receipt["run_key"],
+                })
+        for key, presses in (st.get("finish_per_run") or {}).items():
+            for press in presses:
+                if press.get("mac") == mac and press.get("trigger_id") == trigger_id:
+                    if payload.get("ts") != press.get("ts"):
+                        return jsonify({"ok": False, "error": "trigger_id_conflict"}), 422
+                    return jsonify({"ok": True, "finish": True, "run_key": key})
     result = app.make_response(_handle_trigger(st, payload))
     data = result.get_json(silent=True)
+    if isinstance(data, dict):
+        reason = data.get("error") if result.status_code >= 400 else data.get("reason")
+        if isinstance(reason, str):
+            logger.warning(
+                "Tastendruck HTTP %s: mac=%r trigger_id=%r grund=%r",
+                result.status_code, str(mac)[:32], str(trigger_id)[:64], reason[:160],
+            )
     if (result.status_code == 200 and isinstance(data, dict)
             and isinstance(mac, str) and isinstance(trigger_id, str) and 0 < len(trigger_id) <= 64
             and _lane_for_mac(st, mac) == STARTER_KEY):
@@ -2893,10 +3629,10 @@ def api_post_triggers():
         if not run_key and data.get("reason") == "double_press_too_fast":
             run_key = _attempt_key(int(st["current_run"]), int(st.get("current_attempt") or 1))
         if run_key:
-            st.setdefault("starter_trigger_receipts", {})[mac] = {
-                "trigger_id": trigger_id, "run_key": run_key, "response": data,
-            }
-            save_state(st)
+            existing = (st.get("starter_trigger_receipts") or {}).get(mac)
+            if not existing or existing.get("trigger_id") != trigger_id:
+                _remember_starter_event(st, payload, run_key, data)
+                save_state(st)
     return result
 
 
@@ -3142,9 +3878,7 @@ def api_get_run_status():
     next_in = None
     if finished is not None:
         next_in = max(0, _auto_next_delay_ms(st) - (now_ms() - int(finished))) / 1000
-    lockout_remaining = max(
-        0, int(st.get("start_locked_until_ms", 0) or 0) - now_ms()
-    ) / 1000
+    lockout_remaining = max(0, int(st.get("start_locked_until_ms", 0) or 0) - now_ms()) / 1000
     return jsonify(
         {
             "current_run": current_run,
@@ -3155,6 +3889,19 @@ def api_get_run_status():
             "server_now": now_ms(),
             "next_run_in_s": next_in,
             "clock_sync": _clock_sync_status(st, now_ms()),
+            "unresolved_finish_presses": [
+                {**press, "candidates": _late_finish_candidates(st, int(press["ts"]), press["mac"])}
+                for press in st.get("unresolved_finish_presses") or []
+            ],
+            "unresolved_lane_presses": [
+                {**press, "candidates": _lane_review_candidates(st, int(press["ts"]))}
+                for press in st.get("unresolved_lane_presses") or []
+            ],
+            "deferred_buffer_full": len(st.get("deferred_presses") or []) >= DEFERRED_MAX_COUNT
+            or len(st.get("unresolved_finish_presses") or []) >= DEFERRED_MAX_COUNT
+            or len(st.get("unresolved_lane_presses") or []) >= DEFERRED_MAX_COUNT,
+            "replay_pending_run": st.get("replay_pending_run"),
+            "deferred_count": len(st.get("deferred_presses") or []),
             "runs": runs,
         }
     )
@@ -3164,6 +3911,10 @@ def api_get_run_status():
 def api_post_current_run():
     """Bereitet einen neuen Versuch vor, ohne bereits gemessene Zeiten zu verÃ¤ndern."""
     st = load_state()
+    if st.get("replay_pending_run"):
+        return jsonify(
+            {"ok": False, "error": "Nachverarbeitung vorgemerkter Druecke ist noch offen."}
+        ), 409
     payload = request.get_json(force=True, silent=True) or {}
     try:
         run = int(payload.get("run"))
@@ -3345,15 +4096,16 @@ def _heats_for_xml(st: State) -> list[tuple[int, int, dict[int, int]]]:
 
 def _write_heats_xml(st: State) -> str:
     """Erzeugt das Ergebnis-XML und sichert es zusaetzlich als Datei."""
-    xml = create_xml_heats(_heats_for_xml(st))
-    try:
-        os.makedirs(os.path.dirname(HEATS_XML_PATH), exist_ok=True)
-        with open(HEATS_XML_PATH, "w", encoding="utf-8") as f:
-            f.write(xml)
-        logger.info(f"Wrote results file to {HEATS_XML_PATH}")
-    except OSError as exc:
-        logger.warning(f"Could not write {HEATS_XML_PATH}: {exc}")
-    return xml
+    with _measure_lock_part("ergebnis_xml"):
+        xml = create_xml_heats(_heats_for_xml(st))
+        try:
+            os.makedirs(os.path.dirname(HEATS_XML_PATH), exist_ok=True)
+            with open(HEATS_XML_PATH, "w", encoding="utf-8") as f:
+                f.write(xml)
+            logger.info(f"Wrote results file to {HEATS_XML_PATH}")
+        except OSError as exc:
+            logger.warning(f"Could not write {HEATS_XML_PATH}: {exc}")
+        return xml
 
 
 @app.route("/legacy/heats.xml")

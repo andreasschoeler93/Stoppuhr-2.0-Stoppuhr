@@ -33,6 +33,10 @@ Versionsverlauf: [CHANGELOG.md](CHANGELOG.md). Zwei-Pi-Betrieb (Koffer und Bad):
 - Ab Pi v0.41.11 und Taster v0.19.2 werden Drücke sofort verarbeitet, auch am Starter. Fünf Sekunden Halten fordert den Abbruch des Versuchs an, zu dem dieser Druck gehört; der Pi bestätigt oder lehnt ihn ab. Ist inzwischen ein anderer Versuch aktiv, wird nicht dieser abgebrochen. Bei einer Unterbrechung wird der Abbruch nachgeliefert und ist bis zur Pi-Bestätigung ungewiss. Ein bereits extern abgerufenes vorläufiges Ergebnis kann nicht zurückgerufen werden. Pi zuerst aktualisieren; ältere Pi-Versionen unterstützen den neuen Abbruch nicht.
 - Ab Pi v0.41.12 zählen vorzeitige Bahndrücke nicht als gestoppte Bahnen. Taster v0.19.4 zeigt online nur vom Pi bestätigte Stoppzeiten; dadurch erscheint bei einem während der Stopp-Sperre ignorierten Druck keine falsche Stoppzeit.
 - Ab Pi v0.41.22 warten Redis-Verbindungen höchstens 1 s; schreibende Anfragen werden bei belegter Wettkampf-Zustandssperre nach 250 ms mit HTTP 503 abgelehnt, statt bis zu zehn Sekunden zu warten. Taster können Tastendrücke damit innerhalb ihres HTTP-Timeouts erneut zustellen; Sperr-Timeouts nennen außerdem die haltende Route im Pi-Log. Unabhängige Alarmmeldungen nutzen die Wettkampf-Sperre nicht.
+- Ab Pi v0.42.0 werden Verlaufsdaten und Diagnose-Snapshots von Taster und Ladekoffer nach dem Freigeben der Wettkampf-Sperre verarbeitet. Statusmeldungen desselben Geräts bleiben geordnet; das Beenden und Archivieren eines Wettkampfs wartet auf laufende Statusverarbeitung oder meldet HTTP 503. Lange Sperrbelegungen und Statusverarbeitungen protokollieren Dauer und einzelne Verarbeitungsschritte im Pi-Log. Langsame Zustands-/Redis-Zugriffe und andere schreibende Anfragen können die Sperre weiterhin belegen; die Änderung ist keine Garantie für verlustfreie Zeitmessung und muss auf der Anlage unter Last geprüft werden.
+- Ab Pi v0.42.0 werden vor dem zugehörigen Start eingetroffene Zieleinlaufdrücke vorgemerkt. Ein Druck vor dem aktuellen Start, für den ein älterer gestarteter Lauf infrage kommt, erscheint zur **manuellen Klärung** in der Oberfläche. Nach Prüfung kann er ausdrücklich einem Lauf als zusätzliche Zeit zugeordnet oder bei identischer Zeit und identischem Taster als Duplikat bestätigt werden. Neue Zeiten werden angehängt, bestehende Zuordnungsindizes bleiben unverändert. Ohne älteren möglichen Lauf wird ein Druck vor dem Start weiterhin ignoriert. HTTP 200 bedeutet nicht zwangsläufig, dass eine Zeit gewertet wurde.
+- Pi v0.42.0 erkennt wiederholte gespeicherte Bahn- und Starterdrücke anhand von Taster und Ereignis-ID; eine ID mit anderer Zeit wird abgelehnt. Vorgemerkte Drücke werden einzeln verarbeitet und bleiben bei Fehlern gespeichert. Eine erneute Zustellung desselben Starts oder die Schaltfläche zur Replay-Fortsetzung kann die Nachverarbeitung fortsetzen; bis dahin sind weitere Drücke und der automatische Laufwechsel gesperrt. Mehrdeutige ältere Bahndrücke und vorgemerkte Drücke nach einem Rollenwechsel oder einer nicht verarbeitbaren Anfrage erscheinen zur manuellen Prüfung. Sie können nach ausdrücklicher Auswahl einer freien Bahn oder des Zieleinlaufs zugeordnet oder mit Begründung unbewertet dokumentiert werden. Bestehende Bahnzeiten werden dabei nicht überschrieben; geklärte Fälle werden im Archiv gespeichert, das dafür beim Beenden einen Namen benötigt.
+- Der Pi-Vormerkpuffer und die Listen für offene Prüfungen sind jeweils auf 200 Einträge begrenzt; volle Puffer lehnen neue Vorgänge mit HTTP 503 ab, statt alte zu löschen. Offene Vorgänge verhindern das Beenden des Wettkampfs. Dies ersetzt keine transaktionale, ausfallsichere Ende-zu-Ende-Zustellung. Insbesondere können Redis-Schreibbestätigungen bei Stromausfall oder asynchronem Pi-Wechsel verloren gehen; siehe [Zwei-Pi-Betrieb](deploy/zwei-pi/README.md).
 - Ab Pi v0.41.23 unterstützt die Starteranzeige HTTP-Long-Polling: geänderte Bahnstopp-Anzeigen werden sofort ausgeliefert, statt auf den nächsten Zwei-Sekunden-Abfragezyklus zu warten. Dafür ist Taster-Firmware v0.19.8 nötig; Messzeitstempel und Wertung bleiben unverändert.
 - Bei wiederholten WLAN-Ausfällen am Koffer enthalten Geräte-Logs ab Koffer v0.7.23 Verbindungsabbrüche, Wiederverbindungsversuche, Signalstärke und Funkkanal.
 - Unter Einstellungen → „Ladekoffer: Taster aufwecken“ lässt sich die Slot-Aufweckreihenfolge einstellen (Pi ab v0.41.4, Koffer ab v0.7.21). Die Pinbelegung der aktuellen Koffer-Platine ist fest; das alte Pin-Einstellfeld wird von aktueller Firmware ignoriert.
@@ -66,6 +70,27 @@ cd backend
 ../.venv/bin/python -m unittest discover -s tests
 ```
 
+### Prüfung vor dem Wettkampf
+
+Die automatischen Tests und ein Firmware-Build ersetzen keine Abnahme der realen Anlage.
+Vor einem Einsatz mit Testdaten und unter Aufsicht durchführen und Ergebnisse protokollieren:
+
+1. Versionen beider Pis und aller Taster, Uhrensynchronisation, Stromversorgung, freien
+   Speicherplatz sowie Redis- und Replikationszustand prüfen. Eine unabhängige Referenzzeit
+   mit bekannter Messunsicherheit bereithalten.
+2. Mindestens 21 Läufe mit allen eingesetzten Tastern, gleichzeitigen Bahnstopps, Zieleinlauf,
+   Laufwechsel und Wiederholungsversuch durchspielen. Jeden Druck und jedes Ergebnis mit dem
+   Referenzprotokoll und dem XML-Export vergleichen; keine ungeklärten Warnungen akzeptieren.
+3. WLAN kurz und länger trennen, verzögerte und wiederholte Übertragung sowie Rollenwechsel
+   prüfen. Die Warn- und Klärungswege einschließlich belegter Bahn und unbewerteter Ereignisse
+   erproben; die Pufferstände vor einem Neustart kontrollieren.
+4. Den Wechsel beider Pis und ihre Rückkehr, eine Trennung der Pi-Verbindung und Stromausfälle
+   nur in einem freigegebenen Testfenster durchführen. Nach jedem Wechsel sämtliche Ergebnisse
+   mit der Referenz vergleichen; asynchrone Replikation kann bestätigte Daten verlieren.
+5. Zeitabweichungen gegen die unabhängige Referenz messen und dokumentieren; die Genauigkeit
+   der Referenz und das geforderte Toleranzband müssen vorher feststehen. Bei ungeklärtem
+   Ereignis, Datenverlust oder unzureichender Genauigkeit die Anlage nicht freigeben.
+
 ## Bedienung
 
 ### Anmeldung
@@ -93,7 +118,8 @@ Taster, die in dieser Zeit nicht verbunden sind, empfangen ihn nicht. Buchstaben
 
 ### Abbruch und Wiederholung
 
-Ein langer Druck (2 s) am Starter bricht den Versuch ab (dreimal langes Piepen) und bereitet die nächste Version desselben Laufs vor.
+Ein langer Druck (5 s) am Starter fordert den Abbruch des Versuchs an; erst die Bestätigung durch
+den Pi und das dreimal lange Piepen bestätigen ihn. Danach wird die nächste Version vorbereitet.
 Die Stopp-Sperre beginnt mit dem Abbruch. Über **Laufvorwahl** geht das auch in der Oberfläche.
 Gespeicherte Zeiten bleiben; Versionen werden getrennt nummeriert (z. B. `5/2`) und im XML-Export als eigener Heat ausgegeben.
 
@@ -145,6 +171,7 @@ Hinweise:
 ### Taster-Firmware (ab v0.7.0)
 
 **Einstellungen → Taster-Firmware** listet die Firmware-Releases aus GitHub (`andreasschoeler93/Stoppuhr-2.0-Taster`, änderbar mit `FIRMWARE_REPO`).
+Für die neuen Wiederholungs- und Prüfmechanismen zuerst beide Pis auf v0.42.0 und danach die Taster auf v0.20.0 aktualisieren; offene Ereignisse vor einem Neustart kontrollieren.
 **Auf Taster laden** speichert die `firmware.bin` unter `backend/firmware_cache/` (`FIRMWARE_DIR`) und bietet sie allen online Tastern an.
 Diese laden sie vom Pi, prüfen die MD5 und starten neu. Ohne Internet stehen bereits gespeicherte Versionen zur Verfügung.
 

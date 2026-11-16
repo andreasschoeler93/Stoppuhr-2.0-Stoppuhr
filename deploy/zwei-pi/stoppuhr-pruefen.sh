@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Wird von keepalived regelmaessig aufgerufen (vrrp_script).
 # Exit 0 = dieser Pi darf die Arbeit uebernehmen, Exit 1 = Daten noch nicht aktuell.
-# Ein Pi, dessen Partner gerade arbeitet, wird erst "bereit", wenn seine Redis-Kopie
-# vollstaendig synchron ist. So geht nach einem Neustart nichts verloren.
+# Bei erreichbarem Partner wird die Redis-Verbindung geprueft. Asynchrone Replikation
+# und unabhaengige Hauptbestaende garantieren dabei keine Verlustfreiheit.
 source /etc/stoppuhr-zwei-pi.env
 
 info() { timeout 1 redis-cli "$@" info replication 2>/dev/null | tr -d '\r'; }  # Zeitlimit unter dem keepalived-Intervall (2 s), sonst werden Läufe übersprungen

@@ -1568,10 +1568,175 @@ function renderFinishBox() {
 let runStatus = { current_run: null, current_attempt: 1, current_key: null, runs: {} };
 let serverOffsetMs = 0; // Serverzeit minus Browserzeit
 let lastServerKey = null;
+let lastUnresolvedFinish = null;
+let lastUnresolvedLane = null;
+
+function renderUnresolvedLanes(presses) {
+  const signature = JSON.stringify(presses);
+  if (signature === lastUnresolvedLane) return;
+  lastUnresolvedLane = signature;
+  const box = byId("unresolvedLaneAlerts");
+  box.replaceChildren();
+  box.classList.toggle("d-none", presses.length === 0);
+  if (!presses.length) return;
+  const title = document.createElement("strong");
+  title.textContent = "Achtung: Tastendrücke müssen manuell geklärt werden!";
+  const help = document.createElement("p");
+  help.textContent = "Rolle, Lauf und Zeit anhand der Wettkampfunterlagen prüfen. Bereits belegte Bahnen können nicht überschrieben werden. Manuelle Klärungen werden im Archiv gespeichert.";
+  box.append(title, help);
+  presses.forEach(press => {
+    const row = document.createElement("div");
+    row.className = "border-top pt-2 mb-2";
+    const label = document.createElement("p");
+    label.textContent = `Taster ${press.mac}, ${new Date(press.ts).toLocaleString("de-DE")}, bisherige Rolle ${press.original_lane || "unbekannt"} (${press.reason})`;
+    const select = document.createElement("select");
+    select.className = "form-select form-select-sm mb-2";
+    const empty = document.createElement("option");
+    empty.value = "";
+    empty.textContent = "Lauf und Rolle ausdrücklich wählen";
+    select.append(empty);
+    press.candidates.forEach(candidate => {
+      candidate.lanes.forEach(lane => {
+        const option = document.createElement("option");
+        option.value = JSON.stringify({ action: "assign", run_key: candidate.run_key, lane });
+        option.textContent = `Lauf ${candidate.run_key}, Bahn ${lane}: ${formatMs(candidate.time_ms)}`;
+        select.append(option);
+      });
+      const finish = document.createElement("option");
+      finish.value = JSON.stringify({ action: "finish", run_key: candidate.run_key, lane: null });
+      finish.textContent = `Lauf ${candidate.run_key}, Zieleinlauf: ${formatMs(candidate.time_ms)}`;
+      select.append(finish);
+    });
+    const note = document.createElement("input");
+    note.className = "form-control form-control-sm mb-2";
+    note.maxLength = 500;
+    note.placeholder = "Begründung / Bezug zum Protokoll (erforderlich)";
+    const assign = document.createElement("button");
+    const park = document.createElement("button");
+    assign.type = park.type = "button";
+    assign.className = "btn btn-danger btn-sm me-2";
+    park.className = "btn btn-outline-danger btn-sm";
+    assign.textContent = "Ausgewählt zuordnen";
+    park.textContent = "Unbewertet dokumentieren";
+    const resolve = async (choice) => {
+      if (!note.value.trim()) { alert("Bitte eine Begründung angeben."); return; }
+      if (!choice) { alert("Bitte einen Lauf und eine Rolle wählen."); return; }
+      const description = choice.action === "park" ? "unbewertet dokumentieren" : select.selectedOptions[0].textContent + " zuordnen";
+      if (!confirm(`Diesen Druck wirklich ${description}?`)) return;
+      assign.disabled = park.disabled = true;
+      try {
+        await apiPost("/api/lane-review/resolve", { id: press.id, ...choice, note: note.value });
+        await loadRunStatus();
+      } catch (error) {
+        alert("Klärung fehlgeschlagen: " + error.message);
+      } finally {
+        assign.disabled = park.disabled = false;
+      }
+    };
+    assign.addEventListener("click", () => resolve(select.value ? JSON.parse(select.value) : null));
+    park.addEventListener("click", () => resolve({ action: "park", run_key: null, lane: null }));
+    row.append(label, select, note, assign, park);
+    box.append(row);
+  });
+}
+
+function renderUnresolvedFinish(presses) {
+  const signature = JSON.stringify(presses);
+  if (signature === lastUnresolvedFinish) return;
+  lastUnresolvedFinish = signature;
+  const box = byId("unresolvedFinishAlerts");
+  box.replaceChildren();
+  box.classList.toggle("d-none", presses.length === 0);
+  if (!presses.length) return;
+  const title = document.createElement("strong");
+  title.textContent = "Achtung: Verspätete Zieleinlaufdrücke müssen manuell geprüft werden!";
+  box.append(title);
+  const explanation = document.createElement("p");
+  explanation.textContent = "Lauf und Zeit anhand der Wettkampfunterlagen prüfen. Die Zuordnung wird nicht automatisch vorgenommen.";
+  box.append(explanation);
+  presses.forEach(press => {
+    const row = document.createElement("div");
+    row.className = "d-flex flex-wrap align-items-center gap-2 mb-2";
+    const label = document.createElement("span");
+    label.textContent = `Taster ${press.mac}, Ereigniszeit ${new Date(press.ts).toLocaleString("de-DE")}`;
+    const select = document.createElement("select");
+    select.className = "form-select form-select-sm";
+    select.style.width = "auto";
+    const empty = document.createElement("option");
+    empty.value = "";
+    empty.textContent = "Lauf ausdrücklich wählen";
+    select.append(empty);
+    press.candidates.forEach(candidate => {
+      const option = document.createElement("option");
+      option.value = candidate.run_key;
+      option.textContent = `Lauf ${candidate.run_key}: ${formatMs(candidate.time_ms)}`;
+      select.append(option);
+    });
+    const button = document.createElement("button");
+    const duplicateButton = document.createElement("button");
+    const parkButton = document.createElement("button");
+    button.type = duplicateButton.type = parkButton.type = "button";
+    button.className = duplicateButton.className = parkButton.className = "btn btn-danger btn-sm";
+    button.textContent = "Als zusätzliche Zeit zuordnen";
+    duplicateButton.textContent = "Als Duplikat bestätigen";
+    parkButton.textContent = "Unbewertet dokumentieren";
+    duplicateButton.disabled = true;
+    select.addEventListener("change", () => {
+      duplicateButton.disabled = !press.candidates.some(c => c.run_key === select.value && c.duplicate);
+    });
+    const resolve = async (action) => {
+      const option = select.selectedOptions[0];
+      if (!select.value) {
+        alert("Bitte zuerst einen Lauf wählen.");
+        return;
+      }
+      const question = action === "duplicate"
+        ? `Diesen Druck wirklich als bereits vorhandenes Duplikat in ${option.textContent} bestätigen?`
+        : `Diesen Druck wirklich als zusätzliche Zeit in ${option.textContent} eintragen?`;
+      if (!confirm(question)) return;
+      button.disabled = duplicateButton.disabled = true;
+      try {
+        await apiPost("/api/finish/resolve", { id: press.id, run_key: select.value, action });
+        await loadRunStatus();
+      } catch (error) {
+        alert("Zuordnung fehlgeschlagen: " + error.message);
+      } finally {
+        button.disabled = false;
+        duplicateButton.disabled = !press.candidates.some(c => c.run_key === select.value && c.duplicate);
+      }
+    };
+    button.addEventListener("click", () => resolve("assign"));
+    duplicateButton.addEventListener("click", () => resolve("duplicate"));
+    parkButton.addEventListener("click", async () => {
+      const note = prompt("Begründung / Bezug zum Protokoll:");
+      if (note === null) return;
+      if (!note.trim()) { alert("Bitte eine Begründung angeben."); return; }
+      if (!confirm("Diesen Zieleinlaufdruck wirklich unbewertet dokumentieren?")) return;
+      parkButton.disabled = true;
+      try {
+        await apiPost("/api/finish/resolve", { id: press.id, action: "park", run_key: null, note });
+        await loadRunStatus();
+      } catch (error) {
+        alert("Klärung fehlgeschlagen: " + error.message);
+      } finally {
+        parkButton.disabled = false;
+      }
+    });
+    row.append(label, select, button, duplicateButton, parkButton);
+    box.append(row);
+  });
+}
 
 async function loadRunStatus() {
   const t0 = Date.now();
   runStatus = await apiGet("/api/run-status");
+  renderUnresolvedFinish(runStatus.unresolved_finish_presses || []);
+  renderUnresolvedLanes(runStatus.unresolved_lane_presses || []);
+  byId("deferredBufferAlert").classList.toggle("d-none", !runStatus.deferred_buffer_full);
+  byId("replayPendingAlert").classList.toggle("d-none", !runStatus.replay_pending_run);
+  const deferredNotice = byId("deferredPressNotice");
+  deferredNotice.classList.toggle("d-none", !runStatus.deferred_count);
+  deferredNotice.textContent = `${runStatus.deferred_count} Tastendruck/Drücke vorgemerkt. Der Wettkampf kann erst beendet werden, wenn sie verarbeitet sind.`;
   const clockSync = runStatus.clock_sync || {};
   const clockSyncNotice = byId("clockSyncNotice");
   clockSyncNotice.classList.toggle("alert-success", !!clockSync.ready);
@@ -2250,6 +2415,18 @@ async function init() {
   };
   byId("btnEndCompetition").addEventListener("click", endCompetition);
   byId("btnEndCompetitionKeepTasters").addEventListener("click", endCompetition);
+  byId("resumeReplay").addEventListener("click", async event => {
+    if (!confirm("Die vorgemerkten Drücke jetzt erneut verarbeiten?")) return;
+    event.currentTarget.disabled = true;
+    try {
+      await apiPost("/api/replay/resume", {});
+      await loadRunStatus();
+    } catch (error) {
+      alert("Nachverarbeitung fehlgeschlagen: " + error.message);
+    } finally {
+      event.currentTarget.disabled = false;
+    }
+  });
 
   byId("btnClearStarter").addEventListener("click", () => unassignLane("starter"));
   byId("btnClearFinish").addEventListener("click", () => unassignLane("ziel"));

@@ -1,6 +1,17 @@
 # Zwei-Pi-Betrieb (Stufe 2, Backend v0.6.0 / Firmware v0.10.0)
 
-Nicht für den ersten Wettkampf gedacht – der läuft mit v0.5.1 / v0.9.1. Diese Stufe liegt auf dem Branch `feature/zwei-pi`.
+**Wichtige Grenze:** Der automatische Zwei-Pi-Wechsel ist keine Garantie für verlustfreie Ergebnisse.
+Redis repliziert asynchron; ein bereits bestätigter Druck kann beim Ausfall des aktiven Pi fehlen,
+wenn er noch nicht auf dem anderen Pi angekommen ist. Die Installation richtet außerdem Redis-Snapshots
+mit `save 10 1` ein, keine Bestätigung jedes Drucks auf einem dauerhaften Medium. Nach Stromausfall
+können daher auch lokal jüngste Zustandsänderungen fehlen.
+
+Bei einer Netztrennung können beide Pis unabhängige Hauptbestände entwickeln. Die vorhandene
+Konfliktbehandlung vergleicht Replikations-Offsets; das ist kein Nachweis, dass unterschiedliche
+Schreibverläufe zusammengeführt werden können. Eine automatische Übernahme ist deshalb kein Ersatz
+für eine manuelle Prüfung nach einer Netzpartition. Vor einem Wettkampf müssen Umschaltung, Rückkehr,
+Netztrennung und Stromausfall mit den tatsächlich eingesetzten Geräten und unabhängigen Referenzzeiten
+getestet werden. Ergebnisse während einer Störung nur nach Kontrolle übernehmen.
 
 ## Aufbau
 
@@ -22,9 +33,9 @@ Das Taster-Netz ist abgeschottet: `eth0` hängt per DHCP am Router und gehört *
 
 - Beide Pis sind per Kabel verbunden. Jeder macht sein WLAN als Zugangspunkt (versteckt, WPA2) und hängt es in die Bridge `br0`. Alle Geräte liegen dadurch im selben Netz.
 - Die Taster funken nur auf 2,4 GHz. Die Zugangspunkte sind deshalb fest auf 2,4 GHz eingestellt: Koffer-Pi Kanal 1, Bad-Pi Kanal 11. Die Kanäle 1, 6 und 11 sind nicht überlappend; vor Ort kann ein WLAN-Scan zeigen, ob ein anderer dieser Kanäle weniger belegt ist.
-- Die VIP liegt immer auf dem Pi, der gerade arbeitet (keepalived). Die Taster merken von einem Wechsel nichts, ihre Wiederholungen und die Warteschlange fangen die Sekunden dazwischen ab.
+- Die VIP soll auf dem arbeitenden Pi liegen (keepalived). Taster wiederholen nicht bestätigte Anfragen und puffern sie begrenzt im RAM; das garantiert bei einem Wechsel keine Verlustfreiheit.
 - Der Koffer-Pi arbeitet normalerweise. Der Bad-Pi ist nur Zugangspunkt und hält über Redis-Replikation eine laufende Kopie.
-- Fällt der Koffer-Pi aus oder startet neu, übernimmt der Bad-Pi automatisch (Stoppuhr-Dienst startet dort, Kopie wird zum Hauptbestand). Kommt der Koffer-Pi zurück, gleicht er zuerst die Daten vom Bad-Pi ab und übernimmt erst nach 10 s Wartezeit, wenn alles synchron ist.
+- Fällt der Koffer-Pi aus oder startet neu, übernimmt der Bad-Pi automatisch (Stoppuhr-Dienst startet dort, Kopie wird zum Hauptbestand). Kommt der Koffer-Pi zurück, prüft die Umschaltlogik die Redis-Verbindung und verzögert die Übernahme. Ein Replikationslink allein garantiert nicht, dass alle zuvor bestätigten Daten auf beiden Pis vorhanden sind.
 - Zeit: Beide Pis sind NTP-Server, der Bad-Pi gleicht sich am Koffer-Pi ab. Die Taster holen die Zeit von der VIP.
 
 ## Taster
