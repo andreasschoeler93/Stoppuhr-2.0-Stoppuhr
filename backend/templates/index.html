@@ -380,6 +380,14 @@
               <input type="number" min="0" max="1440" step="1" id="lowBatteryMinInput" class="form-control" value="5">
               <div class="form-text">Zeit unterhalb der Warnschwelle, nach der sich der Taster abschaltet. 0 = nie.</div>
             </div>
+            <div class="col-12">
+              <div class="form-check">
+                <input class="form-check-input" type="checkbox" id="tasterSoundsInput" checked>
+                <label class="form-check-label" for="tasterSoundsInput">Taster: Bedien- und Bestätigungstöne einschalten</label>
+              </div>
+              <div class="form-text">Änderung wird sofort gespeichert und normalerweise innerhalb von 30 Sekunden übernommen. Akku-, Funk-, Abbruch- und Ereigniswarnungen bleiben hörbar. Nach Wettkampfende sind die Töne wieder eingeschaltet. Offline-Taster übernehmen die Änderung nach Wiederverbindung; ältere Firmware unterstützt diese Einstellung nicht.</div>
+              <div id="tasterSoundsStatus" class="form-text" role="status"></div>
+            </div>
             <div class="col-12"><hr class="my-1"><h3 class="h6 mb-0">Ton bei Dashboard-Meldungen (Pieper im Ladekoffer)</h3></div>
             <div class="col-12">
               <div class="form-check">

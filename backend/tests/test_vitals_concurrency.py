@@ -65,6 +65,29 @@ class VitalsConcurrencyTests(unittest.TestCase):
             response = client.post(path, json=payload)
             return response.status_code, response.get_json()
 
+    def test_taster_sounds_can_change_during_a_run_and_reach_vitals(self):
+        start = stopwatch.now_ms()
+        self.assertEqual(self.post("/api/triggers", {"mac": self.macs[0], "ts": start})[0], 200)
+        with patch.object(stopwatch.vitals_history, "add"):
+            status, data = self.post("/api/vitals", {"mac": self.macs[1]})
+            self.assertEqual((status, data["taster_sounds"]), (200, 1))
+            status, data = self.post("/api/settings", {"taster_sounds": False})
+            self.assertEqual((status, data["settings"]["taster_sounds"]), (200, "0"))
+            status, data = self.post("/api/vitals", {"mac": self.macs[1]})
+            self.assertEqual((status, data["taster_sounds"]), (200, 0))
+            self.assertEqual(self.post("/api/settings", {"taster_sounds": "invalid"})[0], 400)
+            self.assertEqual(self.post("/api/settings", {"taster_sounds": True})[0], 200)
+            status, data = self.post("/api/vitals", {"mac": self.macs[1]})
+            self.assertEqual((status, data["taster_sounds"]), (200, 1))
+
+    def test_existing_state_without_sound_setting_defaults_to_enabled(self):
+        state = json.loads(self.store.get(stopwatch.STATE_KEY))
+        del state["settings"]["taster_sounds"]
+        self.store.set(stopwatch.STATE_KEY, json.dumps(state))
+        with patch.object(stopwatch.vitals_history, "add"):
+            status, data = self.post("/api/vitals", {"mac": self.macs[1]})
+        self.assertEqual((status, data["taster_sounds"]), (200, 1))
+
     def test_slow_vital_history_does_not_block_start_or_lane_stops(self):
         entered = threading.Event()
         release = threading.Event()

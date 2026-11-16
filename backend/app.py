@@ -1,6 +1,6 @@
 # ----------------------------------------
 # Stoppuhr Webserver
-# Version: v0.42.0
+# Version: v0.43.0
 # Status: stable-beta
 # ----------------------------------------
 
@@ -57,7 +57,7 @@ from werkzeug.exceptions import HTTPException
 from xml_writer import create_xml_heats
 
 
-APP_VERSION: Final[str] = "0.42.0"
+APP_VERSION: Final[str] = "0.43.0"
 DEFAULT_PORT: Final[int] = 1999  # Since JAuswertung expected this port
 EXIT_ERROR: Final[int] = 1
 STATE_KEY: Final[str] = "STATE"
@@ -208,6 +208,7 @@ def _default_state() -> State:
             "starter_is_finish": "0",
             "low_battery_pct": "10",
             "low_battery_min": "5",
+            "taster_sounds": "1",
         },
         "shutdown_until_ms": 0,
         "start_locked_until_ms": 0,
@@ -826,6 +827,10 @@ def api_set_settings() -> ResponseReturnValue:
                 return jsonify({"ok": False, "error": f"{key} must be a number"}), 400
     if "starter_is_finish" in payload:
         settings["starter_is_finish"] = "1" if payload["starter_is_finish"] in (True, 1, "1", "true") else "0"
+    if "taster_sounds" in payload:
+        if not isinstance(payload["taster_sounds"], bool):
+            return jsonify({"ok": False, "error": "taster_sounds must be a boolean"}), 400
+        settings["taster_sounds"] = "1" if payload["taster_sounds"] else "0"
     for key, upper in (("low_battery_pct", 100), ("low_battery_min", 1440)):
         if key in payload:
             try:
@@ -949,6 +954,7 @@ def api_end_competition() -> ResponseReturnValue:
             logger.exception("Archivieren fehlgeschlagen")
             return jsonify({"ok": False, "error": f"Archivieren fehlgeschlagen: {exc}"}), 500
     st["competition_since_ms"] = now_ms()
+    st.setdefault("settings", {})["taster_sounds"] = "1"
     # Der Vitalverlauf bleibt erhalten; die Buchstaben merken, damit er beschriftet bleibt
     for t in st.get("tasters", []):
         vitals_history.set_label(redis_store, str(t.get("mac")), t.get("letter"))
@@ -1436,7 +1442,11 @@ def api_post_vitals():
                     payload.get("logs"), new_vital["ts"],
                 )
     _log_slow_telemetry(steps)
-    return jsonify({"ok": True, "vital": new_vital})
+    return jsonify({
+        "ok": True,
+        "vital": new_vital,
+        "taster_sounds": 1 if st.get("settings", {}).get("taster_sounds", "1") == "1" else 0,
+    })
 
 
 @app.post("/api/charger")

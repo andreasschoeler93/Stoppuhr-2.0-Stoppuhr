@@ -26,6 +26,7 @@ class CompetitionEndTests(unittest.TestCase):
         self.addCleanup(stopwatch.app.config.pop, "AUTH_DISABLED", None)
 
     def test_ending_without_shutdown_keeps_shutdown_inactive(self):
+        self.state["settings"]["taster_sounds"] = "0"
         tasters = [{"mac": "AA:BB", "name": "Taster", "letter": "C"}]
         vitals = {"AA:BB": {"battery_pct": 90}}
         assignments = {
@@ -50,8 +51,10 @@ class CompetitionEndTests(unittest.TestCase):
         self.assertEqual(self.state["vitals"], vitals)
         self.assertEqual(self.state["assignments"], assignments)
         self.assertEqual(self.state["results"], {})
+        self.assertEqual(self.state["settings"]["taster_sounds"], "1")
 
     def test_ending_still_shuts_down_tasters_by_default(self):
+        self.state["settings"]["taster_sounds"] = "0"
         self.state["tasters"] = [{"mac": "AA:BB", "name": "Taster", "letter": "C"}]
         self.state["vitals"] = {"AA:BB": {"battery_pct": 90}}
         self.state["assignments"]["mapping"] = {"starter": "AA:BB"}
@@ -67,10 +70,18 @@ class CompetitionEndTests(unittest.TestCase):
         self.assertEqual(self.state["shutdown_until_ms"], 110_000)
         self.assertEqual(self.state["tasters"], [])
         self.assertEqual(self.state["vitals"], {})
+        self.assertEqual(self.state["settings"]["taster_sounds"], "1")
         self.assertEqual(
             self.state["assignments"],
             {"mapping": {}, "pending": {}, "last_update_ts": None},
         )
+
+    def test_failed_end_does_not_reset_taster_sounds(self):
+        self.state["settings"]["taster_sounds"] = "0"
+        with patch.object(stopwatch, "_archive_competition", side_effect=RuntimeError("test")):
+            response = self.client.post("/api/competition/end", json={"name": "Test"})
+        self.assertEqual(response.status_code, 500)
+        self.assertEqual(self.state["settings"]["taster_sounds"], "0")
 
 
 if __name__ == "__main__":

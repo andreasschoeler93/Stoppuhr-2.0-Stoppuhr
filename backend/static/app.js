@@ -32,22 +32,27 @@ let currentRun = null;
 let buttons = []; // from backend
 let laneAssignments = {}; // lane -> {active, pending}
 let maxLane = 0;
+let tasterSoundsRevision = 0;
 
 // -----------------------------
 // Vitaldaten-Diagramme (Canvas, ohne Bibliothek)
 // -----------------------------
 const VITAL_CHARTS = [
   { idx: 1, title: "Akku", unit: "%", color: "#198754", min: 0, max: 100, limits: [["taster", "battery"]] },
-  { idx: 2, title: "Akkuspannung", unit: "V", color: "#0d6efd", decimals: 2, limits: [["taster", "vbat"]] },
-  { idx: 3, title: "Temperatur", unit: "°C", color: "#dc3545", decimals: 1, limits: [["taster", "temp"]] },
+  { idx: 2, title: "Akkuspannung", unit: "V", color: "#0d6efd", decimals: 2, min: 3, max: 4.2, expandRange: true, limits: [["taster", "vbat"]] },
+  { idx: 3, title: "Temperatur", unit: "°C", color: "#dc3545", decimals: 1, min: 15, max: 40, expandRange: true, limits: [["taster", "temp"]] },
   { idx: 4, title: "Luftfeuchte", unit: "%", color: "#0dcaf0", decimals: 0, min: 0, max: 100, limits: [["taster", "humidity"]] },
-  { idx: 5, title: "WLAN-Stärke", unit: "dBm", color: "#6f42c1", decimals: 0, limits: [["taster", "rssi"]] },
+  { idx: 5, title: "WLAN-Stärke", unit: "dBm", color: "#6f42c1", decimals: 0, min: -100, max: -30, expandRange: true, limits: [["taster", "rssi"]] },
 ];
 // Pi-Diagramme: idx zeigt auf die Spalte im Pi-Messpunkt [ts, CPU-Temperatur, CPU-Last, Speicher]
 const PI_CHARTS = [
   { id: "pi1", idx: 1, idx2: 2, title: "Pi CPU-Temperatur (durchgezogen) und CPU-Last (gestrichelt)", unit: "°C / %", pi: true, min: 0, max: 100,
     limits: [["pi", "cpu_temp"], ["pi", "cpu_percent"]] },
 ];
+const CHARGER_CURRENT_CHART = {
+  id: "charger-current", idx: 1, title: "Ladekoffer – Gesamtstrom", unit: "A",
+  decimals: 2, min: 0, max: 10, expandRange: true,
+};
 const PI_COLORS = { "Koffer-Pi": "#0d6efd", "Bad-Pi": "#fd7e14", "Pi": "#0d6efd" };
 let vitalsData = null;
 let chargerSeries = [];
@@ -594,10 +599,22 @@ function drawVitals() {
     ? '<span class="text-muted small">Archivierter Wettkampf – der aktuelle Zustand wird nicht angezeigt.</span>' + chargerCurrentChartHtml()
     : vitalsStatusHtml() + piStatusHtml() + chargerStatusHtml();
   if (chargerCurrentSeries.length) {
-    drawVitalChart({ id: "charger-current", idx: 1, title: "Ladekoffer – Gesamtstrom", unit: "A", decimals: 2 }, chargerCurrentSeries);
+    drawVitalChart(CHARGER_CURRENT_CHART, chargerCurrentSeries);
   }
   VITAL_CHARTS.forEach(c => drawVitalChart(c, s));
   PI_CHARTS.forEach(c => drawVitalChart(c, vitalsData.piSeries));
+}
+
+function vitalChartBounds(c, values) {
+  let lo = c.min ?? Math.min(...values);
+  let hi = c.max ?? Math.max(...values);
+  if (c.expandRange) {
+    lo = Math.min(lo, ...values);
+    hi = Math.max(hi, ...values);
+  }
+  if (hi - lo < 1e-6) { lo -= 1; hi += 1; }
+  if (c.min === undefined) { const pad = (hi - lo) * 0.1; lo -= pad; hi += pad; }
+  return [lo, hi];
 }
 
 function drawVitalChart(c, series) {
@@ -623,10 +640,7 @@ function drawVitalChart(c, series) {
     return;
   }
   const dec = c.decimals ?? 0;
-  let lo = c.min ?? Math.min(...all);
-  let hi = c.max ?? Math.max(...all);
-  if (hi - lo < 1e-6) { lo -= 1; hi += 1; }
-  if (c.min === undefined) { const pad = (hi - lo) * 0.1; lo -= pad; hi += pad; }
+  const [lo, hi] = vitalChartBounds(c, all);
   const L = 42, R = 8, T = 8, B = 20;
   const x = t => L + (t - t0) / (t1 - t0) * (w - L - R);
   const y = v => T + (1 - (v - lo) / (hi - lo)) * (h - T - B);
@@ -1219,6 +1233,7 @@ async function loadSettingsIntoUI() {
   byId("starterIsFinishQuick").checked = s.starter_is_finish === "1";
   byId("lowBatteryPctInput").value = s.low_battery_pct ?? "10";
   byId("lowBatteryMinInput").value = s.low_battery_min ?? "5";
+  byId("tasterSoundsInput").checked = (s.taster_sounds ?? "1") === "1";
   byId("alertBeepYellow").checked = (s.alert_beep_yellow ?? "1") === "1";
   byId("alertBeepRed").checked = (s.alert_beep_red ?? "1") === "1";
   byId("alertRedLenInput").value = s.alert_red_len_s ?? "2";
@@ -1234,6 +1249,31 @@ async function loadSettingsIntoUI() {
   byId("btnRangeTest").classList.toggle("btn-danger", rangeOn);
   byId("btnRangeTest").classList.toggle("btn-outline-primary", !rangeOn);
   byId("rangeTestState").textContent = rangeOn ? `Läuft für Taster ${s.range_test_letter}` : "";
+}
+
+async function refreshTasterSounds() {
+  const revision = tasterSoundsRevision;
+  const s = await apiGet("/api/settings");
+  if (revision !== tasterSoundsRevision || byId("tasterSoundsInput").disabled) return;
+  byId("tasterSoundsInput").checked = (s.taster_sounds ?? "1") === "1";
+  byId("tasterSoundsStatus").textContent = "";
+}
+
+async function updateTasterSounds(input) {
+  tasterSoundsRevision++;
+  input.disabled = true;
+  try {
+    await apiPost("/api/settings", { taster_sounds: input.checked });
+    byId("tasterSoundsStatus").textContent = "Gespeichert.";
+  } catch (e) {
+    byId("tasterSoundsStatus").textContent = "Speicherstatus unklar: " + e.message;
+    alert("Tasterton konnte nicht bestätigt werden: " + e.message);
+  } finally {
+    input.disabled = false;
+    refreshTasterSounds().catch(e => {
+      byId("tasterSoundsStatus").textContent = "Aktueller Tasterton-Status nicht verfügbar: " + e.message;
+    });
+  }
 }
 
 async function loadStartcardsFromBackend() {
@@ -2334,6 +2374,8 @@ async function init() {
     await loadSettingsIntoUI();
   });
 
+  byId("tasterSoundsInput").addEventListener("change", event => updateTasterSounds(event.currentTarget));
+
   byId("btnSaveSettings").addEventListener("click", async () => {
     try {
       const baseUrl = getStartcardsBaseUrl();
@@ -2393,6 +2435,8 @@ async function init() {
         name: nameInput.trim(),
         shutdown_tasters: shutdownTasters
       });
+      tasterSoundsRevision++;
+      byId("tasterSoundsInput").checked = true;
       startcards = { rows: [], max_lane: 0, runs: [], source_url: null, last_fetch_ts: null, error: null };
       currentRun = null;
       maxLane = 10;
@@ -2489,6 +2533,13 @@ async function init() {
       refreshNames().catch(() => {});
     }
   }, 5000);
+  setInterval(() => {
+    if (byId("settings").classList.contains("active")) {
+      refreshTasterSounds().catch(e => {
+        byId("tasterSoundsStatus").textContent = "Aktueller Tasterton-Status nicht verfügbar: " + e.message;
+      });
+    }
+  }, 30000);
   byId("tasterList").addEventListener("click", ev => {
     const b = ev.target.closest(".btn-unassign");
     if (b) unassignLane(b.dataset.lane);

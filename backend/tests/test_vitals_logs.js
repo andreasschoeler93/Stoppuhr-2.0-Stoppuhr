@@ -133,3 +133,46 @@ test("Archived charger history accepts old points and preserves current gaps", (
   assert.equal(vm.runInContext("chargerCurrentSeries[0].points[1][1]", context), 0.3);
   assert.equal(vm.runInContext("chargerCurrentSeries[0].points[2][1]", context), null);
 });
+
+test("vital chart bounds use fixed defaults and expand only beyond them", () => {
+  const { context } = loadApp();
+  for (const [index, inside, outside, expected] of [
+    [2, [3.7, 4], [2.8, 4.3], [2.8, 4.3]],
+    [3, [20, 30], [10, 45], [10, 45]],
+    [5, [-80, -45], [-110, -20], [-110, -20]],
+  ]) {
+    context.index = index;
+    context.values = inside;
+    const bounds = vm.runInContext("vitalChartBounds(VITAL_CHARTS.find(c => c.idx === index), values)", context);
+    const configured = vm.runInContext("VITAL_CHARTS.find(c => c.idx === index)", context);
+    assert.deepEqual(Array.from(bounds), [configured.min, configured.max]);
+    context.values = outside;
+    assert.deepEqual(
+      Array.from(vm.runInContext("vitalChartBounds(VITAL_CHARTS.find(c => c.idx === index), values)", context)),
+      expected
+    );
+  }
+  assert.deepEqual(
+    Array.from(vm.runInContext("vitalChartBounds(CHARGER_CURRENT_CHART, [0.2, 8])", context)),
+    [0, 10]
+  );
+  assert.deepEqual(
+    Array.from(vm.runInContext("vitalChartBounds(CHARGER_CURRENT_CHART, [-1, 12])", context)),
+    [-1, 12]
+  );
+});
+
+test("sound switch saves immediately without altering other settings", async () => {
+  const { context, elements } = loadApp();
+  elements.tasterSoundsInput = { checked: false, disabled: false };
+  elements.tasterSoundsStatus = {};
+  vm.runInContext(`apiPost = async (path, body) => {
+    if (path !== "/api/settings" || Object.keys(body).join() !== "taster_sounds" || body.taster_sounds !== false)
+      throw new Error("incorrect setting request");
+    if (!document.getElementById("tasterSoundsInput").disabled) throw new Error("not disabled");
+  };
+  apiGet = async () => ({taster_sounds: "0"});`, context);
+  await vm.runInContext("updateTasterSounds(document.getElementById('tasterSoundsInput'))", context);
+  assert.equal(elements.tasterSoundsInput.disabled, false);
+  assert.equal(elements.tasterSoundsInput.checked, false);
+});
