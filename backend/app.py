@@ -1,6 +1,6 @@
 # ----------------------------------------
 # Stoppuhr Webserver
-# Version: v0.43.0
+# Version: v0.44.0
 # Status: stable-beta
 # ----------------------------------------
 
@@ -57,7 +57,7 @@ from werkzeug.exceptions import HTTPException
 from xml_writer import create_xml_heats
 
 
-APP_VERSION: Final[str] = "0.43.0"
+APP_VERSION: Final[str] = "0.44.0"
 DEFAULT_PORT: Final[int] = 1999  # Since JAuswertung expected this port
 EXIT_ERROR: Final[int] = 1
 STATE_KEY: Final[str] = "STATE"
@@ -128,6 +128,8 @@ class Vital(TypedDict):
     clock_synced: bool
     clock_sync_age_ms: Optional[int]
     online_since: Optional[int]
+    trigger_rejected: NotRequired[bool]
+    trigger_rejection_seen: NotRequired[bool]
 
 
 TASTER_LETTERS = "ABCDEFGHIJ"
@@ -1402,6 +1404,10 @@ def api_post_vitals():
             else None
         ),
     }
+    if isinstance(payload.get("trigger_rejected"), bool):
+        new_vital["trigger_rejected"] = payload["trigger_rejected"]
+    if isinstance(payload.get("trigger_rejection_seen"), bool):
+        new_vital["trigger_rejection_seen"] = payload["trigger_rejection_seen"]
     # Beginn der aktuellen Online-Phase: bleibt, solange die Meldungen nicht laenger als der Timeout ausbleiben
     prev = st["vitals"].get(mac) or {}
     prev_ts = prev.get("ts")
@@ -3358,6 +3364,15 @@ def _handle_trigger(st: State, payload: dict[str, Any], replay: bool = False):
     lanes_in_run = [v["Bahn"] for v in st.get("startcards_per_run", {}).get(str(current_run), [])]
     triggers_per_run = st.get("triggers_per_run") or {}
     triggers_per_run.setdefault(current_key, {})
+    if lane != STARTER_KEY and test_lane is None and lane not in lanes_in_run:
+        if not replay and st.get("run_finished_ts") is not None and payload.get("ts") is not None:
+            _defer_press(st, mac_norm, ts_val, payload.get("trigger_id"), lane=lane)
+            save_state(st)
+            return jsonify({"ok": True, "deferred": True, "reason": "next_run_not_started"})
+        return _review_lane_press(st, {
+            "mac": mac_norm, "ts": ts_val, "lane": lane,
+            "trigger_id": payload.get("trigger_id"),
+        }, "lane_not_in_run")
     # Zweiter Starter-Druck bei laufender Uhr: Lauf beenden (Bahnen ohne Zeit bleiben leer)
     first_start = triggers_per_run[current_key].get(STARTER_KEY) if lane == STARTER_KEY else None
     if first_start:
@@ -3396,13 +3411,13 @@ def _handle_trigger(st: State, payload: dict[str, Any], replay: bool = False):
     ):
         # Kurz vor dem Start gemerkt, damit die Startabweichung spaeter berechnet werden kann
         if lane in lanes_in_run:
-            pre = st.setdefault("prestart_presses", {}).setdefault(current_key, {})  # type: ignore[typeddict-item]
-            pre[lane] = ts_val
             if test_lane is None and payload.get("ts") is not None:
                 # Der Start kann noch kommen (Zustellung nach Pi-Ausfall): nach dem Start einordnen
                 _defer_press(st, mac_norm, int(payload["ts"]), payload.get("trigger_id"))
                 save_state(st)
                 return jsonify({"ok": True, "deferred": True, "reason": "run_not_started"})
+            pre = st.setdefault("prestart_presses", {}).setdefault(current_key, {})  # type: ignore[typeddict-item]
+            pre[lane] = ts_val
             save_state(st)
         return jsonify({"ok": False, "error": "Run has not started yet."}), 400
     # Druck gehoert zu einem spaeteren Lauf, dessen Start noch nicht eingetroffen ist
@@ -3417,6 +3432,14 @@ def _handle_trigger(st: State, payload: dict[str, Any], replay: bool = False):
         starter_press = triggers_per_run[current_key].get(STARTER_KEY)
         lockout_ms = _stop_lockout_ms(st)
         if starter_press and ts_val < int(starter_press["ts"]):
+            if ts_val >= int(starter_press["ts"]) - START_DEVIATION_WINDOW_MS:
+                dev = st.setdefault("start_deviation", {}).setdefault(current_key, {})  # type: ignore[typeddict-item]
+                dev.setdefault(lane, ts_val - int(starter_press["ts"]))
+                if not (isinstance(payload.get("mac"), str)
+                        and isinstance(payload.get("trigger_id"), str)
+                        and 0 < len(payload["trigger_id"]) <= 64):
+                    save_state(st)
+                return _ignored_press(st, payload, "start_deviation", current_key)
             if any(
                 p.get(STARTER_KEY) and int(p[STARTER_KEY]["ts"]) < ts_val
                 for key, p in (st.get("triggers_per_run") or {}).items() if key != current_key
@@ -3912,6 +3935,19 @@ def api_get_run_status():
             or len(st.get("unresolved_lane_presses") or []) >= DEFERRED_MAX_COUNT,
             "replay_pending_run": st.get("replay_pending_run"),
             "deferred_count": len(st.get("deferred_presses") or []),
+            "rejected_tasters": [
+                {
+                    "letter": t.get("letter"),
+                    "mac": t.get("mac"),
+                    "pending": vital.get("trigger_rejected") is True,
+                    "online": bool(vital.get("ts"))
+                    and now_ms() - int(vital["ts"]) <= TASTER_ONLINE_TIMEOUT_MS,
+                }
+                for t in st.get("tasters", [])
+                if (vital := (st.get("vitals") or {}).get(t.get("mac")) or {}).get(
+                    "trigger_rejection_seen"
+                ) is True
+            ],
             "runs": runs,
         }
     )

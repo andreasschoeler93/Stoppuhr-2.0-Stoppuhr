@@ -176,3 +176,23 @@ test("sound switch saves immediately without altering other settings", async () 
   assert.equal(elements.tasterSoundsInput.disabled, false);
   assert.equal(elements.tasterSoundsInput.checked, false);
 });
+
+test("rejected taster alert distinguishes pending and offline states and escapes names", () => {
+  const { context, elements } = loadApp();
+  const classes = {};
+  elements.rejectedTasterAlert = {
+    classList: { toggle: (name, state) => { classes[name] = state; } },
+    textContent: "",
+  };
+  vm.runInContext(`renderRejectedTasters([
+    {letter: "A", online: true, pending: true},
+    {letter: "B", online: true, pending: false},
+    {letter: "<C>", online: false, pending: false}
+  ])`, context);
+  assert.equal(classes["d-none"], false);
+  assert.match(elements.rejectedTasterAlert.textContent, /A \(Druck noch im Puffer\)/);
+  assert.match(elements.rejectedTasterAlert.textContent, /B \(Zustellung nicht mehr blockiert\)/);
+  assert.match(elements.rejectedTasterAlert.textContent, /<C> \(offline – letzter Stand\)/);
+  vm.runInContext("renderRejectedTasters([])", context);
+  assert.equal(classes["d-none"], true);
+});

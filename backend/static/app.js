@@ -1767,11 +1767,21 @@ function renderUnresolvedFinish(presses) {
   });
 }
 
+function renderRejectedTasters(rejected) {
+  const rejectedAlert = byId("rejectedTasterAlert");
+  rejectedAlert.classList.toggle("d-none", !rejected.length);
+  rejectedAlert.textContent = rejected.length
+    ? "Taster meldeten seit ihrem letzten Neustart einen abgelehnten Druck. Zeiten und Taster-Logs prüfen: " +
+      rejected.map(t => `${t.letter || t.mac || "unbekannt"} (${!t.online ? "offline – letzter Stand" : t.pending ? "Druck noch im Puffer" : "Zustellung nicht mehr blockiert"})`).join(", ")
+    : "";
+}
+
 async function loadRunStatus() {
   const t0 = Date.now();
   runStatus = await apiGet("/api/run-status");
   renderUnresolvedFinish(runStatus.unresolved_finish_presses || []);
   renderUnresolvedLanes(runStatus.unresolved_lane_presses || []);
+  renderRejectedTasters(runStatus.rejected_tasters || []);
   byId("deferredBufferAlert").classList.toggle("d-none", !runStatus.deferred_buffer_full);
   byId("replayPendingAlert").classList.toggle("d-none", !runStatus.replay_pending_run);
   const deferredNotice = byId("deferredPressNotice");
