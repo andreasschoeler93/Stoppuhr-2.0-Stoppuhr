@@ -1,6 +1,6 @@
 # ----------------------------------------
 # Stoppuhr Webserver
-# Version: v0.44.5
+# Version: v0.44.6
 # Status: stable-beta
 # ----------------------------------------
 
@@ -58,7 +58,7 @@ from werkzeug.exceptions import HTTPException
 from xml_writer import create_xml_heats
 
 
-APP_VERSION: Final[str] = "0.44.5"
+APP_VERSION: Final[str] = "0.44.6"
 DEFAULT_PORT: Final[int] = 1999  # Since JAuswertung expected this port
 EXIT_ERROR: Final[int] = 1
 STATE_KEY: Final[str] = "STATE"
@@ -212,6 +212,8 @@ def _default_state() -> State:
             "starter_is_finish": "0",
             "low_battery_pct": "10",
             "low_battery_min": "5",
+            "battery_zero_mv": "3300",
+            "battery_full_mv": "4000",
             "taster_sounds": "1",
         },
         "shutdown_until_ms": 0,
@@ -844,6 +846,17 @@ def api_set_settings() -> ResponseReturnValue:
             if not 0 <= value <= upper:
                 return jsonify({"ok": False, "error": f"{key} must be between 0 and {upper}"}), 400
             settings[key] = str(value)
+    if "battery_zero_mv" in payload or "battery_full_mv" in payload:
+        values = {}
+        for key, default in (("battery_zero_mv", "3300"), ("battery_full_mv", "4000")):
+            value = payload.get(key, settings.get(key, default))
+            if isinstance(value, bool) or not re.fullmatch(r"\d+", str(value)):
+                return jsonify({"ok": False, "error": "Akkugrenzen müssen in ganzen Millivolt angegeben werden."}), 400
+            values[key] = int(value)
+        zero, full = values["battery_zero_mv"], values["battery_full_mv"]
+        if zero < 2500 or full > 4500 or full - zero < 100 or zero % 10 or full % 10:
+            return jsonify({"ok": False, "error": "Akkugrenzen: 2,50–4,50 V in 0,01-V-Schritten; mindestens 0,10 V Abstand."}), 400
+        settings.update({key: str(value) for key, value in values.items()})
     if "range_test_letter" in payload:
         letter = str(payload["range_test_letter"] or "").strip().upper()
         if letter and (len(letter) != 1 or letter not in TASTER_LETTERS):
@@ -3829,6 +3842,8 @@ def api_get_display():
         or now < int((st.get("sleep_until") or {}).get(mac, 0) or 0),  # type: ignore[attr-defined]
         "low_battery_pct": _int_setting(st, "low_battery_pct", 10),
         "low_battery_min": _int_setting(st, "low_battery_min", 5),
+        "battery_zero_mv": _int_setting(st, "battery_zero_mv", 3300),
+        "battery_full_mv": _int_setting(st, "battery_full_mv", 4000),
         "lane": None,
         "run": run,
         "attempt": attempt,

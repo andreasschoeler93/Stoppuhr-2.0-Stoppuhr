@@ -1277,6 +1277,16 @@ function getStartcardsBaseUrl() {
   return baseUrl;
 }
 
+function batterySettingsPayload() {
+  const zeroInput = byId("batteryZeroInput"), fullInput = byId("batteryFullInput");
+  if (!zeroInput.value || !fullInput.value || !zeroInput.checkValidity() || !fullInput.checkValidity()) {
+    throw new Error("Bitte gültige Akkugrenzen in 0,01-V-Schritten eingeben.");
+  }
+  const zero = Math.round(Number(zeroInput.value) * 1000), full = Math.round(Number(fullInput.value) * 1000);
+  if (full - zero < 100) throw new Error("Die Akkugrenzen müssen mindestens 0,10 V auseinanderliegen.");
+  return { battery_zero_mv: zero, battery_full_mv: full };
+}
+
 async function loadSettingsIntoUI() {
   const s = await apiGet("/api/settings");
   setStartcardsAddress(s.startcards_base_url || "");
@@ -1288,6 +1298,8 @@ async function loadSettingsIntoUI() {
   byId("starterIsFinishQuick").checked = s.starter_is_finish === "1";
   byId("lowBatteryPctInput").value = s.low_battery_pct ?? "10";
   byId("lowBatteryMinInput").value = s.low_battery_min ?? "5";
+  byId("batteryZeroInput").value = (Number(s.battery_zero_mv ?? 3300) / 1000).toFixed(2);
+  byId("batteryFullInput").value = (Number(s.battery_full_mv ?? 4000) / 1000).toFixed(2);
   byId("tasterSoundsInput").checked = (s.taster_sounds ?? "1") === "1";
   byId("alertBeepYellow").checked = (s.alert_beep_yellow ?? "1") === "1";
   byId("alertBeepRed").checked = (s.alert_beep_red ?? "1") === "1";
@@ -2571,6 +2583,7 @@ async function init() {
         starter_is_finish: byId("starterIsFinishInput").checked,
         low_battery_pct: byId("lowBatteryPctInput").value,
         low_battery_min: byId("lowBatteryMinInput").value,
+        ...batterySettingsPayload(),
         alert_beep_yellow: byId("alertBeepYellow").checked,
         alert_beep_red: byId("alertBeepRed").checked,
         alert_red_len_s: byId("alertRedLenInput").value,

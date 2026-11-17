@@ -387,6 +387,15 @@
               <div class="form-text">Ab diesem Akkustand blinkt die Akkuanzeige und der Taster piept, funktioniert aber weiter. 0 = aus.</div>
             </div>
             <div class="col-md-6">
+              <label class="form-label" for="batteryZeroInput">Taster: Spannung für 0 % (V)</label>
+              <input type="number" min="2.50" max="4.40" step="0.01" id="batteryZeroInput" class="form-control" value="3.30">
+            </div>
+            <div class="col-md-6">
+              <label class="form-label" for="batteryFullInput">Taster: Spannung für 100 % (V)</label>
+              <input type="number" min="2.60" max="4.50" step="0.01" id="batteryFullInput" class="form-control" value="4.00">
+            </div>
+            <div class="col-12"><div class="form-text">Gilt für alle Taster ab Firmware v0.22.2. Mindestens 0,10 V Abstand. Die Prozentanzeige ist eine Schätzung; 100 % bedeutet nicht unbedingt vollständig geladen. Warnung und Abschaltung verwenden weiterhin die ursprüngliche Kennlinie und können deshalb bei anderen Prozentwerten als angezeigt auslösen. Offline-Taster übernehmen die Werte nach Verbindung; nach Neustart gelten bis zur Verbindung die Standardwerte.</div></div>
+            <div class="col-md-6">
               <label class="form-label">Taster: automatisch ausschalten nach (Minuten)</label>
               <input type="number" min="0" max="1440" step="1" id="lowBatteryMinInput" class="form-control" value="5">
               <div class="form-text">Zeit unterhalb der Warnschwelle, nach der sich der Taster abschaltet. 0 = nie.</div>
