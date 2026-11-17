@@ -1,6 +1,6 @@
 # ----------------------------------------
 # Stoppuhr Webserver
-# Version: v0.44.4
+# Version: v0.44.5
 # Status: stable-beta
 # ----------------------------------------
 
@@ -58,7 +58,7 @@ from werkzeug.exceptions import HTTPException
 from xml_writer import create_xml_heats
 
 
-APP_VERSION: Final[str] = "0.44.4"
+APP_VERSION: Final[str] = "0.44.5"
 DEFAULT_PORT: Final[int] = 1999  # Since JAuswertung expected this port
 EXIT_ERROR: Final[int] = 1
 STATE_KEY: Final[str] = "STATE"
@@ -925,11 +925,10 @@ def api_set_limits() -> ResponseReturnValue:
 @app.post("/api/competition/end")
 def api_end_competition() -> ResponseReturnValue:
     st = load_state()
-    if (st.get("unresolved_finish_presses") or st.get("unresolved_lane_presses")
-            or st.get("replay_pending_run") or st.get("deferred_presses")):
+    if st.get("replay_pending_run"):
         return jsonify({
             "ok": False,
-            "error": "Offene oder vorgemerkte Druecke bzw. Nachverarbeitung zuerst klaeren.",
+            "error": "Unterbrochene Nachverarbeitung zuerst fortsetzen.",
         }), 409
     payload = request.get_json(force=True, silent=True) or {}
     shutdown_tasters = payload.get("shutdown_tasters", True)
@@ -945,10 +944,13 @@ def api_end_competition() -> ResponseReturnValue:
             return jsonify({"ok": False, "error": "invalid shutdown_grace_s setting"}), 500
 
     name = str(payload.get("name") or "").strip()[:80]
-    if not name and (st.get("reviewed_lane_presses") or st.get("finish_resolution_receipts")):
-        return jsonify(
-            {"ok": False, "error": "Zur Sicherung manueller Klaerungen einen Archivnamen angeben."}
-        ), 400
+    has_review_data = any(st.get(key) for key in (
+        "deferred_presses", "unresolved_lane_presses", "unresolved_finish_presses",
+        "reviewed_lane_presses", "finish_resolution_receipts",
+    ))
+    automatic_archive = not name and has_review_data
+    if automatic_archive:
+        name = "Wettkampf " + time.strftime("%d.%m.%Y %H:%M", time.localtime(now_ms() / 1000))
     archive_id = None
     if name:
         # Erst sichern, dann loeschen: schlaegt das Speichern fehl, bleibt der Wettkampf unveraendert
@@ -1011,6 +1013,8 @@ def api_end_competition() -> ResponseReturnValue:
         {
             "ok": True,
             "archive_id": archive_id,
+            "archive_name": name if archive_id else None,
+            "automatic_archive": automatic_archive,
             "shutdown_until_ms": st["shutdown_until_ms"],
             "shutdown_grace_s": shutdown_grace_s,
             "shutdown_tasters": shutdown_tasters,
@@ -1049,6 +1053,7 @@ def _archive_competition(st: State, name: str) -> str:
             for key in (
                 "triggers_per_run", "finish_per_run", "finish_assign", "finish_parked", "finish_adopted",
                 "stopped_by_starter", "start_deviation", "aborted_attempts", "assignments",
+                "deferred_presses", "unresolved_lane_presses", "unresolved_finish_presses",
                 "reviewed_lane_presses", "finish_resolution_receipts",
             )
         },

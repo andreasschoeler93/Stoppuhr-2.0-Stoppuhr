@@ -5,9 +5,17 @@ const vm = require("node:vm");
 const { test } = require("node:test");
 
 function element() {
+  const classes = new Set();
   return {
     children: [],
-    classList: { toggle() {} },
+    classList: {
+      toggle(name, force) {
+        const enabled = force === undefined ? !classes.has(name) : force;
+        if (enabled) classes.add(name); else classes.delete(name);
+        return enabled;
+      },
+      contains(name) { return classes.has(name); },
+    },
     style: {},
     value: "",
     handlers: {},
@@ -19,7 +27,10 @@ function element() {
 }
 
 function setup() {
-  const elements = { unresolvedLaneAlerts: element(), unresolvedFinishAlerts: element(), deferredPressNotice: element() };
+  const elements = {
+    unresolvedLaneAlerts: element(), unresolvedFinishAlerts: element(), deferredPressNotice: element(),
+    pressReviewBadge: element(), pressReviewSummary: element(),
+  };
   const document = {
     createElement: element,
     getElementById: id => elements[id] || { addEventListener() {} },
@@ -36,6 +47,30 @@ function setup() {
   );
   return { elements, context };
 }
+
+test("review page shows counts while critical warnings remain outside", () => {
+  const { elements, context } = setup();
+  vm.runInContext("renderPressReviewOverview(0, 0, 0)", context);
+  assert.equal(elements.pressReviewBadge.classList.contains("d-none"), true);
+  assert.match(elements.pressReviewSummary.textContent, /Keine vorgemerkten/);
+  vm.runInContext("renderPressReviewOverview(5, 2, 1)", context);
+  assert.equal(elements.pressReviewBadge.classList.contains("d-none"), false);
+  assert.equal(elements.pressReviewBadge.textContent, "8");
+  assert.equal(elements.pressReviewSummary.textContent, "Tastendrücke prüfen: 5 vorgemerkt, 3 ungeklärt");
+  vm.runInContext("renderPressReviewOverview(0, 0, 0)", context);
+  assert.equal(elements.pressReviewBadge.classList.contains("d-none"), true);
+
+  const html = fs.readFileSync(path.join(__dirname, "..", "templates", "index.html"), "utf8");
+  const overview = html.slice(html.indexOf('id="pressReview"'), html.indexOf("<!-- TAB: Stoppuhr -->"));
+  assert.match(html, /id="press-review-tab"[^>]*data-bs-target="#pressReview"/);
+  for (const id of ["unresolvedLaneAlerts", "unresolvedFinishAlerts", "deferredPressNotice"]) {
+    assert.match(overview, new RegExp(`id="${id}"`));
+  }
+  for (const id of ["deferredBufferAlert", "replayPendingAlert", "rejectedTasterAlert"]) {
+    assert.doesNotMatch(overview, new RegExp(`id="${id}"`));
+    assert.match(html, new RegExp(`id="${id}"`));
+  }
+});
 
 test("deferred presses show context and require explicit transfer to review", async () => {
   const { elements, context } = setup();

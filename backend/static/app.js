@@ -483,27 +483,81 @@ async function uploadChargerFw() {
 // -----------------------------
 // Archiv
 // -----------------------------
+let openArchiveId = null;
+
+async function deleteArchives(items) {
+  if (!items.length) return;
+  const names = items.map(it => `${it.name || "(ohne Name)"} (ID ${it.id})`).join("\n");
+  if (!window.confirm(`${items.length} archivierte Wettkämpfe endgültig löschen?\n\n${names}\n\nErgebnisse, Rohdaten und Vitalverläufe werden gelöscht. Der laufende Wettkampf bleibt erhalten.`)) return;
+  const deleted = [];
+  const errors = [];
+  for (const item of items) {
+    try {
+      const response = await fetch(`/api/archive/${encodeURIComponent(item.id)}`, { method: "DELETE", headers: { "Accept": "application/json" } });
+      if (response.status === 401) {
+        location.href = "/login";
+        throw new Error("Nicht angemeldet");
+      }
+      const body = await response.json();
+      if (!response.ok || body.ok !== true) throw new Error(body.error || `HTTP ${response.status}`);
+      deleted.push(String(item.id));
+    } catch (error) {
+      errors.push(`${item.name || "(ohne Name)"} (ID ${item.id}): ${error.message}`);
+    }
+  }
+  if (deleted.includes(openArchiveId)) {
+    byId("archiveDetail").replaceChildren();
+    openArchiveId = null;
+  }
+  if (vitalsArchive && deleted.includes(String(vitalsArchive.id))) {
+    vitalsArchive = null;
+    vitalsEnd = null;
+    try {
+      await refreshVitals();
+    } catch (error) {
+      errors.push(`Live-Vitaldaten konnten nicht geladen werden: ${error.message}`);
+    }
+  }
+  try {
+    await refreshArchive();
+  } catch (error) {
+    errors.push(`Archivliste konnte nicht aktualisiert werden: ${error.message}`);
+  }
+  if (errors.length) {
+    alert(`${deleted.length} von ${items.length} Löschungen bestätigt. Nicht bestätigte Einträge und Archivliste prüfen:\n${errors.join("\n")}`);
+  }
+}
+
 async function refreshArchive() {
   const items = (await apiGet("/api/archive")).items || [];
   const box = byId("archiveList");
   if (!items.length) { box.textContent = "Noch kein Wettkampf archiviert."; return; }
   const fmt = ts => ts ? new Date(ts).toLocaleString("de-DE", { dateStyle: "short", timeStyle: "short" }) : "–";
   box.className = "mb-3";
-  box.innerHTML = `<div class="table-responsive"><table class="table table-sm align-middle"><thead><tr>
-    <th>Name</th><th>Beendet</th><th>Version</th><th></th></tr></thead><tbody>` +
-    items.map(it => `<tr><td>${escapeHtml(it.name || "")}</td><td>${fmt(it.ended_ts)}</td><td>${escapeHtml(it.app_version || "")}</td>
+  box.innerHTML = `<button type="button" class="btn btn-sm btn-outline-danger mb-2" id="archiveDeleteSelected" disabled>Ausgewählte löschen</button>
+    <div class="table-responsive"><table class="table table-sm align-middle"><thead><tr>
+    <th>Auswahl</th><th>Name</th><th>Beendet</th><th>Version</th><th></th></tr></thead><tbody>` +
+    items.map(it => `<tr><td><input type="checkbox" class="form-check-input" data-arch-select="${escapeHtml(it.id)}" aria-label="Wettkampf ${escapeHtml(it.name || it.id)} auswählen"></td><td>${escapeHtml(it.name || "")}</td><td>${fmt(it.ended_ts)}</td><td>${escapeHtml(it.app_version || "")}</td>
       <td class="text-end"><button class="btn btn-sm btn-outline-primary" data-arch-open="${escapeHtml(it.id)}">Öffnen</button>
       <button class="btn btn-sm btn-outline-danger" data-arch-del="${escapeHtml(it.id)}">Löschen</button></td></tr>`).join("") +
     "</tbody></table></div>";
   box.querySelectorAll("[data-arch-open]").forEach(b => b.addEventListener("click", () => openArchive(b.dataset.archOpen).catch(e => alert("Öffnen fehlgeschlagen: " + e.message))));
-  box.querySelectorAll("[data-arch-del]").forEach(b => b.addEventListener("click", async () => {
-    if (!window.confirm("Archivierten Wettkampf endgültig löschen?")) return;
+  const controls = [...box.querySelectorAll("button, input")];
+  const selectedButton = byId("archiveDeleteSelected");
+  const checkboxes = [...box.querySelectorAll("[data-arch-select]")];
+  const updateSelection = () => { selectedButton.disabled = !checkboxes.some(box => box.checked); };
+  checkboxes.forEach(checkbox => checkbox.addEventListener("change", updateSelection));
+  const remove = async selected => {
+    controls.forEach(control => { control.disabled = true; });
     try {
-      await fetch(`/api/archive/${encodeURIComponent(b.dataset.archDel)}`, { method: "DELETE" });
-      byId("archiveDetail").innerHTML = "";
-      await refreshArchive();
-    } catch (e) { alert("Löschen fehlgeschlagen: " + e.message); }
-  }));
+      await deleteArchives(selected);
+    } finally {
+      controls.forEach(control => { control.disabled = false; });
+      updateSelection();
+    }
+  };
+  selectedButton.addEventListener("click", () => remove(items.filter(it => checkboxes.some(c => c.checked && c.dataset.archSelect === String(it.id)))));
+  box.querySelectorAll("[data-arch-del]").forEach(b => b.addEventListener("click", () => remove(items.filter(it => String(it.id) === b.dataset.archDel))));
 }
 
 async function openArchive(id) {
@@ -522,6 +576,7 @@ async function openArchive(id) {
       <table class="table table-sm mb-0"><thead><tr><th>Bahn</th><th>Name</th><th>Zeit</th></tr></thead><tbody>${rows}</tbody></table></div>`;
   }).join("") || '<div class="text-muted small">Keine Läufe gespeichert.</div>';
   const box = byId("archiveDetail");
+  openArchiveId = String(id);
   box.innerHTML = `<div class="card"><div class="card-body">
     <h3 class="h6">${escapeHtml(a.name || "")}</h3>
     <div class="d-flex flex-wrap gap-2 mb-3">
@@ -1880,6 +1935,16 @@ function renderRejectedTasters(rejected) {
     : "";
 }
 
+function renderPressReviewOverview(deferredCount, laneCount, finishCount) {
+  const total = deferredCount + laneCount + finishCount;
+  const badge = byId("pressReviewBadge");
+  badge.classList.toggle("d-none", total === 0);
+  badge.textContent = total ? String(total) : "";
+  byId("pressReviewSummary").textContent = total
+    ? `Tastendrücke prüfen: ${deferredCount} vorgemerkt, ${laneCount + finishCount} ungeklärt`
+    : "Keine vorgemerkten oder ungeklärten Tastendrücke.";
+}
+
 async function loadRunStatus() {
   const t0 = Date.now();
   runStatus = await apiGet("/api/run-status");
@@ -1889,6 +1954,11 @@ async function loadRunStatus() {
   byId("deferredBufferAlert").classList.toggle("d-none", !runStatus.deferred_buffer_full);
   byId("replayPendingAlert").classList.toggle("d-none", !runStatus.replay_pending_run);
   renderDeferredPresses(runStatus.deferred_presses || [], runStatus.replay_pending_run, runStatus.deferred_revision);
+  renderPressReviewOverview(
+    runStatus.deferred_count || 0,
+    (runStatus.unresolved_lane_presses || []).length,
+    (runStatus.unresolved_finish_presses || []).length
+  );
   const clockSync = runStatus.clock_sync || {};
   const clockSyncNotice = byId("clockSyncNotice");
   clockSyncNotice.classList.toggle("alert-success", !!clockSync.ready);
@@ -2535,7 +2605,7 @@ async function init() {
     const defaultName = "Wettkampf " + new Date().toLocaleDateString("de-DE");
     const nameInput = window.prompt(
       "Unter welchem Namen soll der Wettkampf im Archiv gespeichert werden?\n" +
-      "(Leer lassen = ohne Archivierung beenden, Abbrechen = nicht beenden)",
+      "(Leer lassen = ohne Archivierung beenden; bei offenen oder bereits geklärten Drücken wird automatisch archiviert. Abbrechen = nicht beenden.)",
       defaultName
     );
     if (nameInput === null) return;
@@ -2558,7 +2628,7 @@ async function init() {
       resetSetupPlacement();
       await Promise.all([loadButtons(), loadRunStatus()]);
       alert(
-        `Wettkampf beendet${result.archive_id ? " und im Archiv gespeichert" : ""}. ` +
+        `Wettkampf beendet${result.archive_id ? ` und im Archiv gespeichert${result.automatic_archive ? ` als „${result.archive_name}“` : ""}` : ""}. ` +
         (result.shutdown_tasters
           ? `Der Abschaltbefehl ist ${result.shutdown_grace_s} Sekunden aktiv.`
           : "Taster, Buchstaben und Zuordnungen bleiben erhalten.")

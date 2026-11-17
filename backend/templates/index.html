@@ -66,6 +66,11 @@
       </button>
     </li>
     <li class="nav-item" role="presentation">
+      <button class="nav-link" id="press-review-tab" data-bs-toggle="tab" data-bs-target="#pressReview" type="button" role="tab">
+        Tastendrücke <span id="pressReviewBadge" class="badge text-bg-warning d-none"></span>
+      </button>
+    </li>
+    <li class="nav-item" role="presentation">
       <button class="nav-link" id="vitals-tab" data-bs-toggle="tab" data-bs-target="#vitals" type="button" role="tab">
         Vitaldaten
       </button>
@@ -82,20 +87,25 @@
             </li>
   </ul>
 
-  <div id="unresolvedFinishAlerts" class="alert alert-danger d-none" role="alert"></div>
-  <div id="unresolvedLaneAlerts" class="alert alert-danger d-none" role="alert"></div>
   <div id="rejectedTasterAlert" class="alert alert-danger d-none" role="alert"></div>
   <div id="deferredBufferAlert" class="alert alert-danger d-none" role="alert">
     Achtung: Der Vormerkpuffer des Pi ist voll. Weitere vorzumerkende Drücke werden nicht angenommen.
     Wettkampf unterbrechen und offene Drücke prüfen.
   </div>
-  <div id="deferredPressNotice" class="alert alert-warning d-none" role="status"></div>
   <div id="replayPendingAlert" class="alert alert-danger d-none" role="alert">
     Achtung: Die Nachverarbeitung vorgemerkter Drücke ist nicht abgeschlossen.
     Wettkampf unterbrechen und Tasterverbindung prüfen.
     <button id="resumeReplay" class="btn btn-danger btn-sm ms-2" type="button">Nachverarbeitung fortsetzen</button>
   </div>
   <div class="tab-content">
+    <div class="tab-pane fade" id="pressReview" role="tabpanel" aria-labelledby="press-review-tab">
+      <h2 class="h6">Tastendrücke prüfen</h2>
+      <p id="pressReviewSummary" class="small" role="status"></p>
+      <p class="small text-muted">Drücke bei Bedarf vor dem Wettkampfende prüfen und zuordnen. Offene Drücke werden unbewertet archiviert; eine nachträgliche Zuordnung im Archiv ist nicht möglich.</p>
+      <div id="unresolvedFinishAlerts" class="alert alert-danger d-none"></div>
+      <div id="unresolvedLaneAlerts" class="alert alert-danger d-none"></div>
+      <div id="deferredPressNotice" class="alert alert-warning d-none"></div>
+    </div>
     <!-- TAB: Stoppuhr -->
     <div class="tab-pane fade show active" id="home" role="tabpanel">
       <!-- Die Einrichtungsschritte (#setupSteps) wandern per Skript hierher, solange noch kein Lauf geladen ist -->

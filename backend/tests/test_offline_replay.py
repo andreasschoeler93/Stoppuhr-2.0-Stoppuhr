@@ -120,17 +120,25 @@ class OfflineReplayTests(unittest.TestCase):
             200,
         )
 
-    def test_pending_late_finish_blocks_competition_end(self):
+    def test_pending_late_finish_is_archived_at_competition_end(self):
         self.state["unresolved_finish_presses"] = [{"id": "p", "mac": "FIN", "ts": 19_000}]
-        response = self.client.post("/api/competition/end", json={"shutdown_tasters": False})
-        self.assertEqual(response.status_code, 409)
-        self.assertEqual(len(self.state["unresolved_finish_presses"]), 1)
+        saved = []
+        with patch.object(stopwatch, "_archive_competition", side_effect=lambda state, name: saved.append(copy.deepcopy(state)) or "archive"):
+            response = self.client.post("/api/competition/end", json={"shutdown_tasters": False})
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.json["automatic_archive"])
+        self.assertEqual(saved[0]["unresolved_finish_presses"][0]["id"], "p")
+        self.assertEqual(self.state["unresolved_finish_presses"], [])
 
-    def test_deferred_press_blocks_competition_end(self):
+    def test_deferred_press_is_archived_at_competition_end(self):
         self.press("L1", 15_000)
-        response = self.client.post("/api/competition/end", json={"shutdown_tasters": False})
-        self.assertEqual(response.status_code, 409)
-        self.assertEqual(len(self.state["deferred_presses"]), 1)
+        saved = []
+        with patch.object(stopwatch, "_archive_competition", side_effect=lambda state, name: saved.append(copy.deepcopy(state)) or "archive"):
+            response = self.client.post("/api/competition/end", json={"shutdown_tasters": False})
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.json["automatic_archive"])
+        self.assertEqual(saved[0]["deferred_presses"][0]["ts"], 15_000)
+        self.assertEqual(self.state["deferred_presses"], [])
 
     def test_deferred_manual_review_preserves_event_and_retry_receipt(self):
         event = {"mac": "L1", "ts": 15_000, "trigger_id": "event-1"}
@@ -147,14 +155,12 @@ class OfflineReplayTests(unittest.TestCase):
         self.assertEqual(review["trigger_id"], event["trigger_id"])
         self.assertEqual(review["deferred_id"], item["deferred_id"])
         self.assertEqual(self.state["deferred_presses"], [])
-        self.assertEqual(self.client.post("/api/competition/end", json={}).status_code, 409)
         self.assertEqual(self.client.post("/api/triggers", json=event).json["id"], review["id"])
         self.assertEqual(self.client.post("/api/lane-review/resolve", json={
             "id": review["id"], "action": "park", "run_key": None, "lane": None, "note": "Geprüft",
         }).status_code, 200)
         self.assertEqual(self.state["reviewed_lane_presses"][0]["recv"], item["recv"])
         self.assertEqual(self.client.post("/api/triggers", json=event).status_code, 200)
-        self.assertEqual(self.client.post("/api/competition/end", json={}).status_code, 400)
         captured = []
         def capture_archive(state, name):
             captured.append(copy.deepcopy(state))
@@ -424,7 +430,6 @@ class OfflineReplayTests(unittest.TestCase):
             },
         )
         self.assertEqual(self.client.post("/api/triggers", json=event).json["id"], pending[0]["id"])
-        self.assertEqual(self.client.post("/api/competition/end", json={}).status_code, 409)
 
     def test_existing_reviews_get_start_context_without_guessing_original_run(self):
         self.state["triggers_per_run"] = {
@@ -498,7 +503,6 @@ class OfflineReplayTests(unittest.TestCase):
             "/api/triggers", json={"mac": "L2", "ts": 18_000, "trigger_id": "boot:late"}
         )
         self.assertEqual(retry.status_code, 200)
-        self.assertEqual(self.client.post("/api/competition/end", json={}).status_code, 400)
 
     def test_operator_can_park_review_without_erasing_raw_event(self):
         self.state["unresolved_lane_presses"] = [
@@ -529,7 +533,6 @@ class OfflineReplayTests(unittest.TestCase):
         self.assertEqual(self.client.post("/api/finish/resolve", json=body).status_code, 200)
         self.assertEqual(self.client.post("/api/finish/resolve", json=body).status_code, 200)
         self.assertEqual(self.state["finish_resolution_receipts"]["p"]["ts"], 15_000)
-        self.assertEqual(self.client.post("/api/competition/end", json={}).status_code, 400)
         retry = self.client.post(
             "/api/triggers", json={"mac": "FIN", "ts": 15_000, "trigger_id": "boot:finish"}
         )

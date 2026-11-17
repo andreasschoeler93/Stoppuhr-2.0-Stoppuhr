@@ -35,7 +35,7 @@ class ClientIpTests(unittest.TestCase):
         html = response.get_data(as_text=True)
         nav = html.split('<ul class="nav nav-tabs mb-3" id="mainTabs"', 1)[1].split("</ul>", 1)[0]
         targets = re.findall(r'data-bs-target="([^"]+)"', nav)
-        self.assertEqual(targets, ["#home", "#vitals", "#archive", "#settings"])
+        self.assertEqual(targets, ["#home", "#pressReview", "#vitals", "#archive", "#settings"])
         self.assertIn('id="btnUseClientIp"', html)
         self.assertIn('id="btnReloadStartcards"', html)
         self.assertLess(html.index('id="setupHomeSlot"'), html.index('id="laufSelect"'))

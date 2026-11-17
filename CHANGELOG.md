@@ -5,6 +5,7 @@ Jede Version ist als Git-Tag `vX.Y.Z` markiert und kann in der Weboberfläche un
 
 | Version | Datum | Änderung |
 |---|---|---|
+| v0.44.5 | 2026-11-17 | Vorgemerkte und ungeklärte Drücke auf eigener Seite; beim Wettkampfende unbewertet archivieren statt blockieren. Unterbrochene Nachverarbeitung blockiert weiterhin. Mehrfachauswahl zum Löschen alter Archive. |
 | v0.44.4 | 2026-11-16 | Vorgemerkte Drücke einzeln anzeigen und ausdrücklich zur manuellen Klärung übernehmen; keine automatische Wertung oder Löschung. |
 | v0.44.3 | 2026-11-16 | Separaten ungeglätteten Akku-Prozentwert von Tastern ab v0.22.1 für Warnungen und Diagnose verwenden; Anzeige und Verlauf nutzen den geglätteten Wert. Ältere Taster bleiben kompatibel. |
 | v0.44.2 | 2026-11-16 | Manuelle Klärungsfälle zeigen verständliche Bahn- und Rollenbezeichnungen, Druckzeit und zeitlich benachbarte Starts als Orientierung; neue Bahnfälle speichern zusätzlich den bei der Prüfung aktuellen Lauf. Keine automatische Zuordnung. |
