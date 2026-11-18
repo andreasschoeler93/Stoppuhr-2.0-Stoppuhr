@@ -58,7 +58,7 @@ from werkzeug.exceptions import HTTPException
 from xml_writer import create_xml_heats
 
 
-APP_VERSION: Final[str] = "0.44.7"
+APP_VERSION: Final[str] = "0.44.9"
 DEFAULT_PORT: Final[int] = 1999  # Since JAuswertung expected this port
 EXIT_ERROR: Final[int] = 1
 STATE_KEY: Final[str] = "STATE"
@@ -134,7 +134,7 @@ class Vital(TypedDict):
     trigger_rejection_seen: NotRequired[bool]
 
 
-TASTER_LETTERS = "ABCDEFGHIJ"
+TASTER_LETTERS = "ABCDEFGHIJKL"
 
 
 class Taster(TypedDict, total=False):
@@ -2013,7 +2013,7 @@ def api_post_taster():
     else:
         st["tasters"].append(entry)
 
-    # Buchstaben in der Reihenfolge der Anmeldung vergeben (A-J, bleibt dauerhaft erhalten)
+    # Buchstaben in der Reihenfolge der Anmeldung vergeben (A-L, bleibt dauerhaft erhalten)
     shutdown_active = now_ms() < int(st.get("shutdown_until_ms", 0) or 0)
     if not shutdown_active and not entry.get("letter"):
         used = {t.get("letter") for t in st["tasters"]}

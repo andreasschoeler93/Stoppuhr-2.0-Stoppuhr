@@ -43,6 +43,25 @@ Das Taster-Netz ist abgeschottet: `eth0` hängt per DHCP am Router und gehört *
 In `src/secrets.h`: `SECRET_WIFI_*` = Koffer-WLAN, `SECRET_WIFI2_*` = Bad-WLAN, `SECRET_PI_IP` = VIP.
 Taster ohne Rolle sind im Koffer-WLAN. Mit Rollenzuweisung wechseln sie sofort ins Bad-WLAN, auch wenn es nicht erreichbar ist. Zurück ins Koffer-WLAN gehen sie nur, wenn die Rolle entzogen wird oder der Wettkampf beendet wird.
 
+### Mehr WLAN-Clients am Raspberry Pi 4B
+
+Die Standard-WLAN-Firmware kann die Zahl gleichzeitiger Access-Point-Clients begrenzen. Unter Debian 13 bietet `firmware-brcm80211` für den CYW43455 eine AP-optimierte Minimal-Firmware (erwartet bis zu 19 Clients; ohne erweiterte Roaming-, DFS-Radar-, automatische Kanalwahl- und Antennen-Diversity-Funktionen).
+
+Auf jedem Pi einzeln per Ethernet oder lokal auswählen:
+
+```bash
+cd ~/apps/stoppuhr
+sudo bash deploy/zwei-pi/wlan-mehr-clients.sh
+sudo reboot
+```
+
+Außerhalb eines Wettkampfs umstellen und neu starten; die Auswahl bleibt über Firmware-Updates erhalten. Die Pis einzeln umstellen und neu starten, nicht gleichzeitig. Zur Rückkehr zur Paket-Standardauswahl:
+
+```bash
+sudo update-alternatives --auto cyfmac43455-sdio.bin
+sudo reboot
+```
+
 ## Einrichtung (je Pi)
 
 1. `bash deploy/install.sh` (wie bisher).

@@ -1,7 +1,7 @@
 // Simulator JS: rendert die Display-Ansichten (Bahn 1-5 + Start) und sendet Taster-Trigger
 (function () {
     // config
-    const letters = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J']; // 10 simulated tasters
+    const letters = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K', 'L']; // 12 simulated tasters
     let isRunning = false;
     let startTs = Date.now();
     let lastStopMs = 4056;

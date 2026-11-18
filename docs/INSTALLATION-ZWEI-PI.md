@@ -17,6 +17,8 @@ Die Oberfläche erreichst du danach unter `http://stoppuhr:1999` (oder `http://1
 | DHCP-Bereich | .100–.149 | .150–.199 |
 | Normalerweise | arbeitet | Kopie, Notbetrieb |
 
+Bei zu wenigen gleichzeitigen WLAN-Clients kann auf jedem Raspberry Pi 4B die AP-optimierte CYW43455-Minimal-Firmware ausgewählt werden. Hinweise und Rückweg stehen in [deploy/zwei-pi/README.md](../deploy/zwei-pi/README.md#mehr-wlan-clients-am-raspberry-pi-4b).
+
 Gemeinsame Adresse (VIP): **192.168.50.10**. Sie liegt immer auf dem Pi, der gerade arbeitet.
 
 ## 1. Was du brauchst
