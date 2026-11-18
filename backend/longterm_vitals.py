@@ -70,13 +70,28 @@ def known(store: Any) -> list[str]:
     return sorted(macs)
 
 
-def history(store: Any, mac: str) -> list[dict[str, Any]]:
+def history(
+    store: Any, mac: str, since: int | None = None, until: int | None = None,
+) -> list[dict[str, Any]]:
     if not device_logs.valid_mac(mac):
         raise ValueError("Ungültige MAC-Adresse")
     entries = []
-    for _, raw in store.hscan_iter(KEY_PREFIX + mac.upper()):
+    for field, raw in store.hscan_iter(KEY_PREFIX + mac.upper()):
+        if since is not None or until is not None:
+            try:
+                bucket_ts = int(field) * INTERVAL_MS
+            except ValueError as exc:
+                raise ValueError("Ungültiges Langzeit-Zeitfenster") from exc
+            if (since is not None and bucket_ts < since) or (
+                until is not None and bucket_ts >= until
+            ):
+                continue
         point = json.loads(raw)
         if not isinstance(point, dict) or type(point.get("ts")) is not int:
             raise ValueError("Ungültiger Langzeit-Messpunkt")
+        if (since is not None and point["ts"] < since) or (
+            until is not None and point["ts"] >= until
+        ):
+            continue
         entries.append(point)
     return sorted(entries, key=lambda point: point["ts"])

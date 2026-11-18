@@ -1,6 +1,6 @@
 # ----------------------------------------
 # Stoppuhr Webserver
-# Version: v0.44.10
+# Version: v0.44.11
 # Status: stable-beta
 # ----------------------------------------
 
@@ -59,7 +59,7 @@ from werkzeug.exceptions import HTTPException
 from xml_writer import create_xml_heats
 
 
-APP_VERSION: Final[str] = "0.44.10"
+APP_VERSION: Final[str] = "0.44.11"
 DEFAULT_PORT: Final[int] = 1999  # Since JAuswertung expected this port
 EXIT_ERROR: Final[int] = 1
 STATE_KEY: Final[str] = "STATE"
@@ -1753,6 +1753,7 @@ def _beep_config(st: State) -> dict[str, Any]:
         "yellow_on": 1 if fresh and settings.get("alert_beep_yellow", "1") == "1" else 0,
         "yellow_seq": int(state.get("yellow_seq") or 0),
         "red_on": 1 if fresh and state.get("red") and settings.get("alert_beep_red", "1") == "1" else 0,
+        "red_seq": int(state.get("red_seq") or 0),
         "red_ms": _int_setting(st, "alert_red_len_s", 2) * 1000,
         "red_every_ms": _int_setting(st, "alert_red_every_s", 10) * 1000,
     }
@@ -1765,16 +1766,30 @@ def api_post_alert_state() -> ResponseReturnValue:
 
     def texts(key: str) -> list[str]:
         items = payload.get(key)
-        return sorted({str(t)[:200] for t in items})[:50] if isinstance(items, list) else []
+        if not isinstance(items, list):
+            return []
+        identities = set()
+        for item in items:
+            text = str(item)[:200]
+            text = re.sub(r"\s*\(-?\d+(?:[.,]\d+)?\s*(?:%|V|°C|dBm|s)\)", "", text)
+            text = re.sub(r"\s*\(zuletzt vor [^)]*\)", "", text)
+            identities.add(text)
+        return sorted(identities)[:50]
 
     yellow, red = texts("yellow"), texts("red")
     with _ALERT_STATE_LOCK:
         prev = _alert_state()
         seq = int(prev.get("yellow_seq") or 0)
+        red_seq = int(prev.get("red_seq") or 0)
         if any(t not in (prev.get("yellow") or []) for t in yellow):
             seq += 1
+        if any(t not in (prev.get("red_alerts") or []) for t in red):
+            red_seq += 1
         redis_store.set(
-            ALERT_STATE_KEY, json.dumps({"ts": now_ms(), "yellow": yellow, "red": bool(red), "yellow_seq": seq})
+            ALERT_STATE_KEY, json.dumps({
+                "ts": now_ms(), "yellow": yellow, "red": bool(red), "red_alerts": red,
+                "yellow_seq": seq, "red_seq": red_seq,
+            })
         )
     return jsonify({"ok": True})
 
@@ -1918,6 +1933,25 @@ def api_longterm_vitals_download(mac: str):
         mimetype="text/csv",
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
+
+
+@app.get("/api/vitals/longterm/<mac>/points")
+def api_longterm_vitals_points(mac: str):
+    if not device_logs.valid_mac(mac):
+        return jsonify({"error": "Ungültige MAC-Adresse"}), 400
+    try:
+        since = int(request.args["from"])
+        until = int(request.args["to"])
+        if since < 0 or until <= since or until - since > 32 * 86400 * 1000:
+            raise ValueError("Ungültiger Zeitraum")
+    except (KeyError, ValueError):
+        return jsonify({"error": "Bitte einen gültigen Zeitraum bis zu 32 Tagen wählen."}), 400
+    try:
+        points = longterm_vitals.history(redis_store, mac, since, until)
+    except (redis.exceptions.RedisError, ValueError):
+        logger.exception("Langzeit-Vitaldaten für %s konnten nicht gelesen werden", mac)
+        return jsonify({"error": "Langzeit-Vitaldaten konnten nicht gelesen werden."}), 503
+    return jsonify({"mac": mac.upper(), "fields": list(longterm_vitals.FIELDS), "points": points})
 
 
 def _thin(points: list[Any]) -> list[Any]:

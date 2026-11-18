@@ -201,6 +201,44 @@ class LongtermVitalsTests(unittest.TestCase):
         self.assertEqual(rows[0]["temp"], "")
         self.assertEqual(rows[1]["battery"], "")
 
+    def test_points_api_filters_range_and_keeps_csv_unfiltered(self):
+        self.redis.hashes[longterm_vitals.KEY_PREFIX + MAC] = {
+            "1": json.dumps({"ts": 60_000, "battery": 0}),
+            "2": json.dumps({"ts": 120_000, "temp": 22}),
+            "3": json.dumps({"ts": 180_000, "rssi": -70}),
+        }
+        response = self.client.get(
+            f"/api/vitals/longterm/{MAC.lower()}/points?from=60001&to=180000"
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json["mac"], MAC)
+        self.assertEqual(response.json["fields"], list(vitals_history.FIELDS))
+        self.assertEqual(response.json["points"], [{"ts": 120_000, "temp": 22}])
+        self.assertEqual(
+            self.client.get(f"/api/vitals/longterm/{MAC}/points?from=180000&to=240000").json["points"],
+            [{"ts": 180_000, "rssi": -70}],
+        )
+        self.assertEqual(
+            self.client.get(f"/api/vitals/longterm/{MAC}/points?from=240000&to=300000").json["points"],
+            [],
+        )
+        response = self.client.get(f"/api/vitals/longterm/{MAC}")
+        self.assertEqual(len(list(csv.DictReader(
+            io.StringIO(response.get_data(as_text=True).lstrip("\ufeff")), delimiter=";"
+        ))), 3)
+
+    def test_points_api_rejects_bad_inputs_and_reports_store_errors(self):
+        for suffix in ("", "?from=0&to=0", "?from=-1&to=100", "?from=0&to=9999999999"):
+            response = self.client.get(f"/api/vitals/longterm/{MAC}/points{suffix}")
+            self.assertEqual(response.status_code, 400)
+        response = self.client.get("/api/vitals/longterm/no/points?from=0&to=1")
+        self.assertEqual(response.status_code, 400)
+        with patch.object(self.redis, "hscan_iter", side_effect=redis.exceptions.ConnectionError):
+            self.assertEqual(
+                self.client.get(f"/api/vitals/longterm/{MAC}/points?from=0&to=60000").status_code,
+                503,
+            )
+
     def test_invalid_missing_and_storage_errors_are_explicit(self):
         self.assertEqual(self.client.get("/api/vitals/longterm/invalid").status_code, 400)
         self.assertEqual(self.client.get(f"/api/vitals/longterm/{MAC}").status_code, 404)
