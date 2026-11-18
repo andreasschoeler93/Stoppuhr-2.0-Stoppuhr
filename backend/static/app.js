@@ -1596,9 +1596,23 @@ function vitalsHtml(btn) {
     parts.push(levelHtml(escapeHtml(btn.battery_percent + "%" + (btn.vbat != null ? " (" + Number(btn.vbat).toFixed(2) + " V)" : "")), level));
   }
   if (btn.rssi_dbm != null) parts.push(levelHtml(escapeHtml(btn.rssi_dbm + " dBm"), limitLevel(btn.rssi_dbm, lim.rssi)));
-  if (btn.ssid) parts.push(escapeHtml(btn.ssid));
   if (btn.temp != null) parts.push(levelHtml(escapeHtml(Number(btn.temp).toFixed(1) + " °C"), limitLevel(btn.temp, lim.temp)));
   if (btn.humidity != null) parts.push(levelHtml(escapeHtml(Number(btn.humidity).toFixed(0) + " % rF"), limitLevel(btn.humidity, lim.humidity)));
+  return parts.join(" · ");
+}
+
+function vitalWarningsHtml(btn) {
+  if (!btn || !btn.online) return "offline";
+  const lim = LIMITS.taster, parts = [];
+  const add = (value, rule, label, decimals, unit) => {
+    const level = limitLevel(value, rule);
+    if (level) parts.push(levelHtml(`${label}: ${Number(value).toFixed(decimals)} ${unit}`, level));
+  };
+  add(btn.battery_raw ?? btn.battery_percent, lim.battery, "Akku (Warnwert)", 0, "%");
+  add(btn.vbat, lim.vbat, "Spannung", 2, "V");
+  add(btn.rssi_dbm, lim.rssi, "WLAN", 0, "dBm");
+  add(btn.temp, lim.temp, "Temperatur", 1, "°C");
+  add(btn.humidity, lim.humidity, "Luftfeuchte", 0, "% rF");
   return parts.join(" · ");
 }
 
@@ -1652,8 +1666,9 @@ function renderStarter() {
   const lvl = tasterLevel(s, true);
   box.classList.remove("lvl-danger", "lvl-warning");
   if (lvl) box.classList.add("lvl-" + lvl);
+  const warnings = s ? vitalWarningsHtml(s) : "";
   box.innerHTML = (s
-    ? `<strong>Taster ${escapeHtml(s.letter || "?")}</strong> <span class="small text-muted">${escapeHtml(s.name)} · ${vitalsHtml(s)}</span>`
+    ? `<strong>Taster ${escapeHtml(s.letter || "?")}</strong>${s.name ? ` <span class="small text-muted">${escapeHtml(s.name)}</span>` : ""}${warnings ? ` <span class="small">${warnings}</span>` : ""}`
     : `<span class="text-muted small">kein Starter – Taster hierher ziehen</span>`) + pendingHtml;
 }
 
@@ -1667,8 +1682,9 @@ function renderFinishBox() {
   const lvl = tasterLevel(f, true);
   box.classList.remove("lvl-danger", "lvl-warning");
   if (lvl) box.classList.add("lvl-" + lvl);
+  const warnings = f ? vitalWarningsHtml(f) : "";
   box.innerHTML = (f
-    ? `<strong>Taster ${escapeHtml(f.letter || "?")}</strong> <span class="small text-muted">${escapeHtml(f.name)} · ${vitalsHtml(f)}</span>`
+    ? `<strong>Taster ${escapeHtml(f.letter || "?")}</strong>${f.name ? ` <span class="small text-muted">${escapeHtml(f.name)}</span>` : ""}${warnings ? ` <span class="small">${warnings}</span>` : ""}`
     : `<span class="text-muted small">kein Zieleinlauf – Taster hierher ziehen (optional)</span>`) + pendingHtml;
 }
 
@@ -2243,7 +2259,7 @@ function renderButtonList() {
         ${unassignHtml}
         <span class="taster-badge">${escapeHtml(slotLabel)}</span>
       </div>
-      <div class="taster-mac">${escapeHtml(btn.name ? btn.name + " · " + btn.mac : btn.mac)}</div>
+      <div class="taster-mac">${escapeHtml(btn.name ? btn.name + " · " + btn.mac : btn.mac)}${btn.ssid ? ` · WLAN: ${escapeHtml(btn.ssid)}` : ""}</div>
       <div class="small mt-1 text-muted">
         ${vitalsHtml(btn)}
       </div>
@@ -2348,7 +2364,8 @@ function renderLanesTable() {
       }
       const shown = activeBtn || pendingBtn;
       laneLevel = tasterLevel(shown, true);
-      tasterHtml = `<div class="taster-assigned"><strong>Taster ${escapeHtml(main)}</strong>${extra}<div class="small text-muted">${vitalsHtml(shown)}</div></div>`;
+      const warnings = vitalWarningsHtml(shown);
+      tasterHtml = `<div class="taster-assigned"><strong>Taster ${escapeHtml(main)}</strong>${extra}${warnings ? `<div class="small">${warnings}</div>` : ""}</div>`;
     }
 
     tr.innerHTML = `

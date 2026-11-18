@@ -5,6 +5,7 @@ Jede Version ist als Git-Tag `vX.Y.Z` markiert und kann in der Weboberfläche un
 
 | Version | Datum | Änderung |
 |---|---|---|
+| v0.44.7 | 2026-11-18 | Bahnen, Starter und Zieleinlauf zeigen Vitalwerte nur bei Warnung oder kritischem Grenzwert; WLAN-Name in der Tasterzuordnung neben der MAC-Adresse. |
 | v0.44.6 | 2026-11-17 | Spannungsgrenzen für 0 und 100 % der Tasteranzeige einstellbar; Akkuwarnung und Abschaltung bleiben unverändert. Taster-Firmware ab v0.22.2. |
 | v0.44.5 | 2026-11-17 | Vorgemerkte und ungeklärte Drücke auf eigener Seite; beim Wettkampfende unbewertet archivieren statt blockieren. Unterbrochene Nachverarbeitung blockiert weiterhin. Mehrfachauswahl zum Löschen alter Archive. |
 | v0.44.4 | 2026-11-16 | Vorgemerkte Drücke einzeln anzeigen und ausdrücklich zur manuellen Klärung übernehmen; keine automatische Wertung oder Löschung. |

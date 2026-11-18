@@ -56,6 +56,74 @@ test("battery warning uses raw reading while displaying smoothed percent", () =>
   assert.match(vm.runInContext("sensorAlerts(vitalsData.tasters, [])[0].text", context), /10 %/);
 });
 
+test("lane vitals show only individually flagged values and the actual battery warning value", () => {
+  const { context } = loadApp();
+  vm.runInContext(`var sample = {
+    online: true, battery_percent: 60, battery_raw: 60, vbat: 4.1,
+    rssi_dbm: -50, ssid: "WLAN", temp: 25, humidity: 40
+  };`, context);
+  assert.equal(vm.runInContext("vitalWarningsHtml(sample)", context), "");
+  vm.runInContext("sample.battery_raw = 25; sample.vbat = 3.2; sample.rssi_dbm = -75; sample.temp = 55; sample.humidity = 80", context);
+  const warnings = vm.runInContext("vitalWarningsHtml(sample)", context);
+  assert.match(warnings, /val-warning[^>]*>Akku \(Warnwert\): 25 %/);
+  assert.match(warnings, /val-danger[^>]*>Spannung: 3\.20 V/);
+  assert.match(warnings, /val-warning[^>]*>WLAN: -75 dBm/);
+  assert.match(warnings, /val-danger[^>]*>Temperatur: 55\.0 °C/);
+  assert.match(warnings, /val-warning[^>]*>Luftfeuchte: 80 % rF/);
+  assert.doesNotMatch(warnings, /60 %|WLAN ·/);
+  vm.runInContext("sample.battery_raw = null; sample.battery_percent = 15; sample.vbat = null; sample.rssi_dbm = null; sample.temp = null; sample.humidity = null", context);
+  assert.match(vm.runInContext("vitalWarningsHtml(sample)", context), /val-danger[^>]*>Akku \(Warnwert\): 15 %/);
+  vm.runInContext("sample.online = false", context);
+  assert.equal(vm.runInContext("vitalWarningsHtml(sample)", context), "offline");
+});
+
+test("Taster card places escaped WLAN by MAC and leaves other vitals on their own row", () => {
+  const { context, cards } = loadApp();
+  vm.runInContext(`buttons = [{ id: "1", letter: "A", mac: "AA:BB", name: "Sensor",
+    role: "none", online: true, ssid: "<test>", battery_percent: 80, rssi_dbm: -50 }];
+    getSlotForButton = () => ({ slot: null }); renderButtonList();`, context);
+  assert.equal(cards.length, 1);
+  assert.match(cards[0].innerHTML, /taster-mac">Sensor · AA:BB · WLAN: &lt;test&gt;<\/div>/);
+  assert.match(cards[0].innerHTML, /80%/);
+  assert.equal((cards[0].innerHTML.match(/&lt;test&gt;/g) || []).length, 1);
+});
+
+test("Starter and Zieleinlauf show warnings and offline without healthy vitals", () => {
+  const { context, elements } = loadApp();
+  const box = () => ({ classList: { add() {}, remove() {} }, innerHTML: "" });
+  elements.starterDrop = box();
+  elements.finishDrop = box();
+  vm.runInContext(`buttons = [
+    { role: "starter", letter: "A", online: true, battery_percent: 80, temp: 25 },
+    { role: "finish", letter: "B", online: false }
+  ]; renderStarter(); renderFinishBox();`, context);
+  assert.match(elements.starterDrop.innerHTML, /Taster A/);
+  assert.doesNotMatch(elements.starterDrop.innerHTML, /80%|25\.0/);
+  assert.match(elements.finishDrop.innerHTML, /offline/);
+  vm.runInContext("buttons[0].temp = 46; renderStarter()", context);
+  assert.match(elements.starterDrop.innerHTML, /Temperatur: 46\.0 °C/);
+});
+
+test("lane row stays compact unless a value exceeds a limit", () => {
+  const { context, elements } = loadApp();
+  const rows = [];
+  elements.bahnenTableBody = { innerHTML: "", appendChild: row => rows.push(row) };
+  elements.bahnenFooter = {};
+  context.document.createElement = () => ({
+    classList: { add() {} }, querySelector: () => ({ addEventListener() {} }),
+  });
+  vm.runInContext(`maxLane = 1; currentRun = 1;
+    startcards = { rows: [{ Lauf: 1, Bahn: 1 }] };
+    buttons = [{ id: "A", letter: "A", online: true, battery_percent: 80, temp: 25 }];
+    laneAssignments = { 1: { active: "A", pending: null } };
+    attachDropTargets = () => {}; updateClocks = () => {};
+    renderLanesTable();`, context);
+  assert.match(rows[0].innerHTML, /Taster A<\/strong><\/div>/);
+  assert.doesNotMatch(rows[0].innerHTML, /80%|25\.0/);
+  vm.runInContext("buttons[0].temp = 46; renderLanesTable()", context);
+  assert.match(rows[1].innerHTML, /val-warning[^>]*>Temperatur: 46\.0 °C/);
+});
+
 test("Alle starten sends one all-slots request and waits for completion", async () => {
   const { context, elements } = loadApp();
   const all = { disabled: false, dataset: {}, hasAttribute: name => name === "data-wake-all" };
