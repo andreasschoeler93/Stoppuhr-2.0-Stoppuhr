@@ -69,6 +69,40 @@ class AlertAckTests(unittest.TestCase):
         state = self.report(["Ladekoffer meldet sich nicht (zuletzt vor 2 Min.)."], [])
         self.assertEqual(state["yellow_seq"], 1)
 
+    def test_mute_one_warning_preserves_other_and_new_occurrences(self):
+        red_a = "Taster I: Akku kritisch (4 %)."
+        red_b = "Taster K: Akku kritisch (5 %)."
+        self.report([], [red_a, red_b])
+        response = self.client.post("/api/alert-state/mute", json={"alert": red_a})
+        self.assertEqual(response.status_code, 200)
+        state = self.report([], ["Taster I: Akku kritisch (3 %).", red_b])
+        self.assertEqual(state["red_muted"], ["Taster I: Akku kritisch."])
+        self.assertTrue(state["red"])
+        response = self.client.post("/api/alert-state/mute", json={"alert": red_b})
+        self.assertEqual(response.status_code, 200)
+        self.assertFalse(json.loads(self.redis.data[stopwatch.ALERT_STATE_KEY])["red"])
+        self.report([], [])
+        state = self.report([], [red_a])
+        self.assertEqual(state["red_muted"], [])
+        self.assertTrue(state["red"])
+
+    def test_local_fault_mask_and_reject_stale_ack(self):
+        temp = "Übertemperatur im Ladekoffer (44,2 °C)."
+        mcp = "Ladeplatine: Baustein MCP23017 antwortet nicht, Ladestatus unsicher."
+        self.report([], [temp, mcp])
+        response = self.client.post("/api/alert-state/mute", json={"alert": temp})
+        self.assertEqual(response.status_code, 200)
+        config = stopwatch._beep_config(stopwatch._default_state())
+        self.assertEqual(config["local_mute"], 1)
+        self.assertEqual(config["red_on"], 1)
+        response = self.client.post("/api/alert-state/mute", json={"alert": mcp})
+        self.assertEqual(response.status_code, 200)
+        config = stopwatch._beep_config(stopwatch._default_state())
+        self.assertEqual((config["local_mute"], config["red_on"]), (3, 0))
+        with patch.object(stopwatch, "now_ms", return_value=stopwatch.now_ms() + 31_000):
+            response = self.client.post("/api/alert-state/mute", json={"alert": mcp})
+            self.assertEqual(response.status_code, 409)
+
 
 if __name__ == "__main__":
     unittest.main()

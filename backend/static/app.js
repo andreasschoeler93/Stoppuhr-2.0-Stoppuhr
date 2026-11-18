@@ -397,7 +397,7 @@ async function refreshSensorAlerts() {
   (map.unmapped_taster || []).forEach(t => tasters.push(t));
   const alerts = sensorAlerts(tasters, pi.nodes || []);
   byId("sensorAlerts").innerHTML = alerts
-    .map(a => `<div class="alert alert-${a.level} py-1 px-2 small mb-2">${escapeHtml(a.text)}</div>`).join("");
+    .map(a => alertBannerHtml(a.level, a.text)).join("");
 }
 
 function piStatusHtml() {
@@ -461,6 +461,13 @@ const CHARGER_STATE = {
 };
 const CHARGER_LEVEL = { error: "danger", warn: "warning", info: "info", ok: "success" };
 
+function alertBannerHtml(level, text) {
+  const button = level === "danger"
+    ? '<button type="button" class="btn btn-sm btn-outline-danger ms-2 alert-mute">Stumm</button>'
+    : "";
+  return `<div class="alert alert-${level} py-1 px-2 small mb-2 d-flex align-items-center justify-content-between gap-2"><span class="alert-text">${escapeHtml(text)}</span>${button}</div>`;
+}
+
 async function refreshCharger() {
   chargerData = await apiGet("/api/charger");
   const badge = byId("chargerBadge"), box = byId("chargerAlerts");
@@ -470,7 +477,7 @@ async function refreshCharger() {
   badge.textContent = label;
   // Oben nur, was Aufmerksamkeit braucht; alles andere steht im Tab "Vitaldaten"
   box.innerHTML = chargerData.messages.filter(m => m.level === "error" || m.level === "warn")
-    .map(m => `<div class="alert alert-${CHARGER_LEVEL[m.level]} py-1 px-2 small mb-2">${escapeHtml(m.text)}</div>`).join("");
+    .map(m => alertBannerHtml(CHARGER_LEVEL[m.level], m.text)).join("");
   if (vitalsData && byId("vitals").classList.contains("active")) drawVitals();
 }
 
@@ -492,11 +499,34 @@ async function refreshAllAlerts() {
 // Der Ton kommt aus dem Pieper des Ladekoffers: das Dashboard meldet seine gelben/roten Meldungen an den Pi
 function alertTexts(level) {
   return [...document.querySelectorAll(`#chargerAlerts .alert-${level}, #sensorAlerts .alert-${level}`)]
-    .map(el => el.textContent.trim());
+    .map(el => el.querySelector(".alert-text").textContent.trim());
+}
+
+function updateMutedAlerts(mutedTexts) {
+  document.querySelectorAll("#chargerAlerts .alert-danger, #sensorAlerts .alert-danger").forEach(el => {
+    const button = el.querySelector(".alert-mute");
+    const muted = mutedTexts.includes(el.querySelector(".alert-text").textContent.trim());
+    button.disabled = muted;
+    button.textContent = muted ? "Quittiert" : "Stumm";
+  });
 }
 
 async function reportAlerts() {
-  await apiPost("/api/alert-state", { yellow: alertTexts("warning"), red: alertTexts("danger") });
+  const result = await apiPost("/api/alert-state", { yellow: alertTexts("warning"), red: alertTexts("danger") });
+  updateMutedAlerts(result.muted_texts || []);
+}
+
+async function muteAlert(event) {
+  const button = event.target.closest(".alert-mute");
+  if (!button) return;
+  button.disabled = true;
+  try {
+    await apiPost("/api/alert-state/mute", { alert: button.closest(".alert").querySelector(".alert-text").textContent.trim() });
+    await reportAlerts();
+  } catch (error) {
+    button.disabled = false;
+    alert("Stummschalten fehlgeschlagen: " + error.message);
+  }
 }
 
 // -----------------------------
@@ -2826,6 +2856,8 @@ async function init() {
   byId("btnAccountSave").addEventListener("click", saveAccount);
   byId("btnLogout").addEventListener("click", logout);
   byId("vitals-tab").addEventListener("shown.bs.tab", () => refreshVitals().catch(() => {}));
+  byId("sensorAlerts").addEventListener("click", muteAlert);
+  byId("chargerAlerts").addEventListener("click", muteAlert);
   byId("vitals-tab").addEventListener("shown.bs.tab", () => refreshSystemStatus().catch(() => {}));
   byId("vitalsHours").addEventListener("change", () => {
     if (vitalsEnd !== null) {
