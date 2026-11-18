@@ -27,6 +27,9 @@ class OfflineReplayTests(unittest.TestCase):
         p = patch.object(stopwatch.vitals_history, "add_start")
         p.start()
         self.addCleanup(p.stop)
+        p = patch.object(stopwatch.longterm_vitals, "capture")
+        p.start()
+        self.addCleanup(p.stop)
         self.state["current_run"] = 5
         self.state["startcards_per_run"] = {
             "5": [{"Bahn": "1"}, {"Bahn": "2"}],

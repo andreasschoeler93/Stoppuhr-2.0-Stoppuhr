@@ -29,6 +29,9 @@ class CompetitionEndTests(unittest.TestCase):
         p = patch.object(stopwatch.vitals_history, "set_label")
         p.start()
         self.addCleanup(p.stop)
+        p = patch.object(stopwatch.longterm_vitals, "capture")
+        p.start()
+        self.addCleanup(p.stop)
         self.addCleanup(stopwatch.app.config.pop, "AUTH_DISABLED", None)
 
     def test_ending_without_shutdown_keeps_shutdown_inactive(self):

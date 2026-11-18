@@ -5,6 +5,7 @@ Jede Version ist als Git-Tag `vX.Y.Z` markiert und kann in der Weboberfläche un
 
 | Version | Datum | Änderung |
 |---|---|---|
+| v0.44.10 | 2026-11-18 | MAC-bezogenes Langzeitlog: Übernahme bestehender Vitaldaten beim Dienststart, alle 24 Stunden und beim Wettkampfende; Minutenmittel auch außerhalb des Wettkampfs als CSV. Keine automatische Löschung. |
 | v0.44.9 | 2026-11-18 | Skript für Raspberry Pi 4B: optionale AP-optimierte WLAN-Minimal-Firmware zur Unterstützung von mehr Clients auswählen; erfordert einen manuellen Neustart je Pi. |
 | v0.44.8 | 2026-11-18 | Tasterbuchstaben A–L vergeben; damit können bis zu zwölf Taster angemeldet werden. |
 | v0.44.7 | 2026-11-18 | Bahnen, Starter und Zieleinlauf zeigen Vitalwerte nur bei Warnung oder kritischem Grenzwert; WLAN-Name in der Tasterzuordnung neben der MAC-Adresse. |

@@ -1,6 +1,6 @@
 # ----------------------------------------
 # Stoppuhr Webserver
-# Version: v0.44.7
+# Version: v0.44.10
 # Status: stable-beta
 # ----------------------------------------
 
@@ -32,6 +32,7 @@ import finish as finish_module
 import firmware_store
 import ladekoffer
 import limits as limits_module
+import longterm_vitals
 import node_info
 import node_names
 import pi_update
@@ -58,7 +59,7 @@ from werkzeug.exceptions import HTTPException
 from xml_writer import create_xml_heats
 
 
-APP_VERSION: Final[str] = "0.44.9"
+APP_VERSION: Final[str] = "0.44.10"
 DEFAULT_PORT: Final[int] = 1999  # Since JAuswertung expected this port
 EXIT_ERROR: Final[int] = 1
 STATE_KEY: Final[str] = "STATE"
@@ -965,6 +966,15 @@ def api_end_competition() -> ResponseReturnValue:
     if automatic_archive:
         name = "Wettkampf " + time.strftime("%d.%m.%Y %H:%M", time.localtime(now_ms() / 1000))
     archive_id = None
+    end_ts = now_ms()
+    try:
+        longterm_vitals.capture(redis_store, end_ts)
+    except (redis.exceptions.RedisError, ValueError, TypeError):
+        logger.exception("Langzeit-Vitaldaten konnten beim Wettkampfende nicht gespeichert werden")
+        return jsonify({
+            "ok": False,
+            "error": "Langzeit-Vitaldaten konnten nicht gespeichert werden. Wettkampf nicht beendet.",
+        }), 503
     if name:
         # Erst sichern, dann loeschen: schlaegt das Speichern fehl, bleibt der Wettkampf unveraendert
         try:
@@ -972,7 +982,7 @@ def api_end_competition() -> ResponseReturnValue:
         except Exception as exc:  # noqa: BLE001
             logger.exception("Archivieren fehlgeschlagen")
             return jsonify({"ok": False, "error": f"Archivieren fehlgeschlagen: {exc}"}), 500
-    st["competition_since_ms"] = now_ms()
+    st["competition_since_ms"] = end_ts
     st.setdefault("settings", {})["taster_sounds"] = "1"
     # Der Vitalverlauf bleibt erhalten; die Buchstaben merken, damit er beschriftet bleibt
     for t in st.get("tasters", []):
@@ -1870,6 +1880,46 @@ def api_download_pi_logs() -> Response:
 VITALS_MAX_POINTS: Final[int] = 1500
 
 
+@app.get("/api/vitals/longterm")
+def api_longterm_vitals():
+    try:
+        return jsonify({"macs": longterm_vitals.known(redis_store)})
+    except redis.exceptions.RedisError:
+        logger.exception("Langzeit-Vitaldaten konnten nicht aufgelistet werden")
+        return jsonify({"error": "Langzeit-Vitaldaten sind derzeit nicht verfügbar."}), 503
+
+
+@app.get("/api/vitals/longterm/<mac>")
+def api_longterm_vitals_download(mac: str):
+    if not device_logs.valid_mac(mac):
+        return jsonify({"error": "Ungültige MAC-Adresse"}), 400
+    try:
+        points = longterm_vitals.history(redis_store, mac)
+    except (redis.exceptions.RedisError, ValueError):
+        logger.exception("Langzeit-Vitaldaten für %s konnten nicht gelesen werden", mac)
+        return jsonify({"error": "Langzeit-Vitaldaten konnten nicht gelesen werden."}), 503
+    if not points:
+        return jsonify({"error": "Keine Langzeit-Vitaldaten für diese MAC-Adresse vorhanden."}), 404
+    output = io.StringIO(newline="")
+    writer = csv.writer(output, delimiter=";")
+    writer.writerow(["Zeit_UTC", "Zeit_ms", "MAC", *longterm_vitals.FIELDS])
+    for point in points:
+        ts = point["ts"]
+        utc = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(ts / 1000))
+        values = [point.get(field, "") for field in longterm_vitals.FIELDS]
+        values = [
+            "'" + value if isinstance(value, str) and value.lstrip().startswith(("=", "+", "-", "@"))
+            else value for value in values
+        ]
+        writer.writerow([utc, ts, mac.upper(), *values])
+    filename = f"taster-vitaldaten-{mac.upper().replace(':', '-')}.csv"
+    return Response(
+        "\ufeff" + output.getvalue(),
+        mimetype="text/csv",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
 def _thin(points: list[Any]) -> list[Any]:
     """Dünnt lange Verläufe aus (jeder n-te Punkt), damit die Anzeige bei 48 h schnell bleibt."""
     step = -(-len(points) // VITALS_MAX_POINTS)
@@ -1948,6 +1998,26 @@ def _record_pi_vitals() -> None:
                 vitals_history.add_pi(redis_store, _pi_name(n), ts, n)
         except Exception:  # noqa: BLE001
             pass
+
+
+LONGTERM_CAPTURE_INTERVAL_S: Final[int] = 24 * 60 * 60
+LONGTERM_RETRY_INTERVAL_S: Final[int] = 5 * 60
+
+
+def _longterm_vitals_loop(stop: threading.Event) -> None:
+    """Sichert beim Dienststart und danach regelmäßig auf dem aktiven Redis-Knoten."""
+    while not stop.is_set():
+        try:
+            if redis_store.info("replication").get("role") != "master":
+                delay = LONGTERM_RETRY_INTERVAL_S
+            else:
+                # Eine zusätzliche Minute Puffer für noch laufende Vitalmeldungen.
+                longterm_vitals.capture(redis_store, now_ms() - longterm_vitals.INTERVAL_MS)
+                delay = LONGTERM_CAPTURE_INTERVAL_S
+        except (redis.exceptions.RedisError, ValueError, TypeError):
+            logger.exception("Automatische Übernahme der Langzeit-Vitaldaten fehlgeschlagen")
+            delay = LONGTERM_RETRY_INTERVAL_S
+        stop.wait(delay)
 
 
 @app.get("/api/taster")
@@ -2130,12 +2200,13 @@ def api_reload_startcards() -> tuple[ResponseReturnValue, int]:
         runs_sorted = sorted(list(runs), key=lambda x: int(x) if str(x).isdigit() else str(x))
 
         # 6. Update the global state
+        fetch_ts = now_ms()
         state["startcards"].update(
             {
                 "rows": startcards,
                 # "startcards_per_run": startcards_per_run,
                 "row_count": len(startcards),
-                "last_fetch_ts": now_ms(),
+                "last_fetch_ts": fetch_ts,
                 "last_error": None,
                 "source_url": url,
                 "max_lane": max_lane,
@@ -4363,6 +4434,7 @@ def sort_lane_times_by_lane(presses_by_lane: dict[str, PressEvent]) -> dict[str,
 def main():
     port = int(os.environ.get("PORT", str(DEFAULT_PORT)))
     threading.Thread(target=_record_pi_vitals, daemon=True).start()
+    threading.Thread(target=_longterm_vitals_loop, args=(threading.Event(),), daemon=True).start()
     app.run(host="0.0.0.0", port=port)
 
 

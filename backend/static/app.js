@@ -116,6 +116,7 @@ function buildArchiveVitals(a) {
 }
 
 async function refreshVitals() {
+  await refreshLongtermVitals();
   const hours = Number(byId("vitalsHours").value);
   const win = hours * 3600 * 1000;
   byId("vitalsLive").classList.toggle("d-none", !vitalsArchive);
@@ -157,6 +158,21 @@ async function refreshVitals() {
   vitalsData = { hours, t1: vitalsEnd, series, starts: starts || [], tasters: list, piNodes, piSeries };
   byId("vitalsRange").textContent = vitalsEnd ? vitalsRangeText(t1, win) : "";
   drawVitals();
+}
+
+async function refreshLongtermVitals() {
+  const box = byId("longtermVitals");
+  try {
+    const data = await apiGet("/api/vitals/longterm");
+    box.innerHTML = data.macs.length
+      ? data.macs.map(mac => `<div class="mb-1"><code>${escapeHtml(mac)}</code> <a href="/api/vitals/longterm/${encodeURIComponent(mac)}" download>CSV herunterladen</a></div>`).join("")
+      : '<span class="text-muted small">Noch keine Langzeitdaten vorhanden.</span>';
+  } catch (error) {
+    box.textContent = "Langzeitlogs konnten nicht geladen werden: " + error.message;
+    box.className = "text-danger small";
+    return;
+  }
+  box.className = "";
 }
 
 // Grenzwerte: low = Wert darunter, high = Wert darüber. [gelb ab, rot ab]

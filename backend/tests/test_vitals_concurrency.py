@@ -52,6 +52,7 @@ class VitalsConcurrencyTests(unittest.TestCase):
             (stopwatch.vitals_history, "add_start", {}),
             (stopwatch.vitals_history, "add_clock_offset", {}),
             (stopwatch.vitals_history, "set_label", {}),
+            (stopwatch.longterm_vitals, "capture", {}),
             (stopwatch.device_logs, "record_observations", {}),
         ):
             p = patch.object(obj, name, **kwargs)
