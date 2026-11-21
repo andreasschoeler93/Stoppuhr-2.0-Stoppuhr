@@ -1,12 +1,13 @@
-# Stoppuhr – Pi-Software (v0.41.22)
+# Stoppuhr – Pi-Software (v0.44.12)
 
 Webbasierte Wettkampf-Stoppuhr: ESP32-Taster messen die Zeit, der Raspberry Pi sammelt, wertet aus und
 liefert die Ergebnisse an JAuswertung. Die Taster-Firmware liegt im Repository `Taster`.
 
-> **Der Pi wertet aus. Die Taster messen Zeit. Nichts geht verloren.**
+> **Die Taster erfassen die Druckzeit. Störungen und Pi-Ausfälle können trotzdem Datenverlust verursachen.**
 
-Versionsverlauf: [CHANGELOG.md](CHANGELOG.md). Zwei-Pi-Betrieb (Koffer und Bad): Schritt-für-Schritt-Anleitung in
-[docs/INSTALLATION-ZWEI-PI.md](docs/INSTALLATION-ZWEI-PI.md), Hintergründe in [deploy/zwei-pi/README.md](deploy/zwei-pi/README.md).
+Versionsverlauf: [CHANGELOG.md](CHANGELOG.md). Installationsanleitungen: [Einzel-Pi](docs/INSTALLATION-EINZEL-PI.md)
+oder [Zwei-Pi-Betrieb (Koffer und Bad)](docs/INSTALLATION-ZWEI-PI.md); Hintergründe zum Zwei-Pi-Betrieb stehen in
+[deploy/zwei-pi/README.md](deploy/zwei-pi/README.md).
 
 ## Funktionen
 
@@ -64,18 +65,22 @@ Versionsverlauf: [CHANGELOG.md](CHANGELOG.md). Zwei-Pi-Betrieb (Koffer und Bad):
 
 ### Auf dem Raspberry Pi
 
-Installiert Python-Umgebung, Redis, chrony und systemd-Dienste, die beim Booten starten:
+Für die vollständigen Schritt-für-Schritt-Anleitungen mit Betriebssystem-, Zugangsdaten-, WLAN- und Taster-`secrets.h`-Einrichtung:
+[Einzel-Pi](docs/INSTALLATION-EINZEL-PI.md) oder [Zwei-Pi-Betrieb](docs/INSTALLATION-ZWEI-PI.md).
+Das folgende Beispiel installiert die Software auf einem einzelnen Pi:
 
 ```bash
+mkdir -p ~/apps
+cd ~/apps
 sudo apt-get install -y git
-git clone https://github.com/andreasschoeler93/Stoppuhr-2.0-Stoppuhr.git
-cd Stoppuhr
+git clone https://github.com/andreasschoeler93/Stoppuhr-2.0-Stoppuhr.git stoppuhr
+cd stoppuhr
 bash deploy/install.sh
 ```
 
 - Oberfläche: `http://<PI-IP>:1999`. Beim ersten Öffnen legst du Benutzername und Kennwort fest.
 - Dienste: `stoppuhr` (Server) und `stoppuhr-knoten` (Systemstatus, WLAN-Umstellung). Log: `journalctl -u stoppuhr -f`.
-- Die Daten liegen in Redis (`save 10 1`), nicht im Projektordner.
+- Die Daten liegen in Redis (`save 10 1`), nicht im Projektordner. Snapshots und Zwei-Pi-Replikation sind kein Ersatz für externe Sicherungen und garantieren keinen verlustfreien Erhalt bei Stromausfall oder Pi-Ausfall.
 - Einstellungen per Umgebungsvariable in `deploy/stoppuhr.service`: `REDIS_HOST`, `REDIS_PORT`, `PORT`, `HEATS_XML_PATH`.
 - Zeitserver für die Taster: in `/etc/chrony/chrony.conf` `allow <Taster-Netz>` ergänzen
   (ohne Internet zusätzlich `local stratum 10`), danach `sudo systemctl restart chrony`.
@@ -227,11 +232,9 @@ Update auf dem Pi ohne Oberfläche:
 cd ~/apps/stoppuhr && git fetch origin --tags && git switch main && git pull --ff-only origin main && sudo systemctl restart stoppuhr
 ```
 
-## Roadmap
+## Projektstatus
 
-- [x] Dynamische Bahnen, persistente Taster-Zuordnung
-- [x] Zwei-Pi-Betrieb, Updates aus der Oberfläche, Anmeldung
-- [ ] Backup-Zieleinlauf (Differenzanzeige)
-- [ ] Warnlogik (gelb / rot / ok)
-- [ ] Lauf-Historie, nachträgliche Korrektur per Drag & Drop
-- [ ] 1.0: wettkampftauglich, Dokumentation, Freeze
+Die aktuelle Softwareversion ist `v0.44.12`; die API kennzeichnet den Stand weiterhin als `stable-beta`.
+Eine Versionsnummer, automatisierte Tests oder der Zwei-Pi-Failover sind keine Freigabe für einen Wettkampf.
+Vor einem realen Einsatz die [Prüfung vor dem Wettkampf](#prüfung-vor-dem-wettkampf) durchführen und die bekannten
+[Ausfallgrenzen](deploy/zwei-pi/README.md#bekannte-grenzen) berücksichtigen.

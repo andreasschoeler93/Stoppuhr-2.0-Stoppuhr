@@ -1,4 +1,7 @@
-# Zwei-Pi-Betrieb (Stufe 2, Backend v0.6.0 / Firmware v0.10.0)
+# Zwei-Pi-Betrieb: Architektur und Grenzen (Pi-Software v0.44.12)
+
+Die aktuelle Schritt-für-Schritt-Anleitung für die Erstinstallation, Zugangsdaten und Taster-`secrets.h` steht in
+[docs/INSTALLATION-ZWEI-PI.md](../../docs/INSTALLATION-ZWEI-PI.md). Diese Datei beschreibt Architektur, Verhalten und Grenzen.
 
 **Wichtige Grenze:** Der automatische Zwei-Pi-Wechsel ist keine Garantie für verlustfreie Ergebnisse.
 Redis repliziert asynchron; ein bereits bestätigter Druck kann beim Ausfall des aktiven Pi fehlen,
@@ -95,7 +98,7 @@ Standard: Koffer-Pi Kanal 1, Bad-Pi Kanal 11. Ein anderer Kanal kann als Argumen
 3. DHCP und Name: übernimmt `install-zwei-pi.sh` (nächster Schritt) per `dnsmasq`. Koffer vergibt `.100`–`.149`, Bad `.150`–`.199`,
    damit auch bei Ausfall eines Pi Adressen vergeben werden. Beide antworten auf den Namen **`stoppuhr`** mit der gemeinsamen Adresse
    (anderer Name: `NAME=...`). Im Browser genügt dann `http://stoppuhr:1999`, es kommt immer die Oberfläche des arbeitenden Pi.
-   Das gilt für Geräte in einem der beiden WLANs (sie nutzen den Pi als DNS-Server). Sonst `http://192.168.50.10:1999`.
+   Das gilt für Geräte in einem der beiden WLANs (sie nutzen den Pi als DNS-Server). Im Heimnetz `http://stoppuhr.local:1999` verwenden; die VIP `192.168.50.10` liegt nur im Taster-Netz und ist vom normalen Heimnetz aus nicht erreichbar.
    Das Skript setzt die Hostnamen `stoppuhr-koffer` bzw. `stoppuhr-bad` (per Avahi als `<name>.local` im Router-Netz erreichbar); der Name `stoppuhr` gehört der gemeinsamen Adresse.
 4. Zwei-Pi-Dienste: `bash deploy/zwei-pi/install-zwei-pi.sh koffer` bzw. `... bad`. Abweichende Adressen über `VIP=`, `KOFFER_IP=`, `BAD_IP=`.
    Der normale Dienst `stoppuhr` wird dabei abgeschaltet; keepalived startet ihn nur auf dem arbeitenden Pi.
@@ -113,7 +116,7 @@ API: `POST /api/assign` (mit `"immediate": true` sofort), `POST /api/cancel-pend
 
 ## Weboberfläche
 
-Der Tab „Systemstatus“ zeigt im Zwei-Pi-Betrieb beide Pis: wer arbeitet, Hostname, WLAN-Name, IP-Adressen, Redis-Zustand (Hauptbestand/Kopie, synchron), Stoppuhr-Dienst, letzter Wechsel, CPU/Temperatur/RAM/Disk. Oben rechts steht ein Kennzeichen „Aktiv: Koffer-Pi/Bad-Pi“ (grün = alles gut, gelb = Partner fehlt oder Kopie nicht synchron, rot = niemand arbeitet). Zusätzlich: Anzahl Taster online je WLAN, und je Taster das aktuelle WLAN (ab Firmware v0.10.1).
+Unter **Vitaldaten → Systemstatus** zeigt die Oberfläche im Zwei-Pi-Betrieb beide Pis: wer arbeitet, Hostname, WLAN-Name, IP-Adressen, Redis-Zustand (Hauptbestand/Kopie, synchron), Stoppuhr-Dienst, letzter Wechsel, CPU/Temperatur/RAM/Disk. Oben rechts steht ein Kennzeichen „Aktiv: Koffer-Pi/Bad-Pi“ (grün = alles gut, gelb = Partner fehlt oder Kopie nicht synchron, rot = niemand arbeitet). Zusätzlich: Anzahl Taster online je WLAN, und je Taster das aktuelle WLAN (ab Firmware v0.10.1).
 Jeder Pi liefert seinen Zustand über den Dienst `stoppuhr-knoten` (Port 2000), der immer läuft; so ist der Partner auch im Standby sichtbar.
 
 ### Namen (ab v0.27.0)
