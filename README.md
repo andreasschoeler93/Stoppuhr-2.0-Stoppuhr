@@ -3,7 +3,7 @@
 Webbasierte Wettkampf-Stoppuhr: ESP32-Taster messen die Zeit, der Raspberry Pi sammelt, wertet aus und
 liefert die Ergebnisse an JAuswertung. Die Taster-Firmware liegt im Repository `Taster`.
 
-> **Die Taster erfassen die Druckzeit. Störungen und Pi-Ausfälle können trotzdem Datenverlust verursachen.**
+> **Die Taster puffern und wiederholen nicht bestätigte Meldungen; verspätete Ereignisse werden nachverarbeitet oder zur Prüfung angezeigt. Bei Geräteausfällen oder Netztrennungen kann es trotzdem zu Datenverlust kommen.**
 
 Versionsverlauf: [CHANGELOG.md](CHANGELOG.md). Installationsanleitungen: [Einzel-Pi](docs/INSTALLATION-EINZEL-PI.md)
 oder [Zwei-Pi-Betrieb (Koffer und Bad)](docs/INSTALLATION-ZWEI-PI.md); Hintergründe zum Zwei-Pi-Betrieb stehen in
