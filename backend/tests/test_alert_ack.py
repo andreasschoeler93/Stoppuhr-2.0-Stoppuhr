@@ -86,6 +86,40 @@ class AlertAckTests(unittest.TestCase):
         self.assertEqual(state["red_muted"], [])
         self.assertTrue(state["red"])
 
+    def test_mute_one_yellow_preserves_new_warnings_and_reappearance(self):
+        yellow_a = "Taster H: WLAN-Signal auffällig (-76 dBm)."
+        yellow_a_updated = "Taster H: WLAN-Signal auffällig (-75 dBm)."
+        yellow_b = "Taster J: Akku auffällig (30 %)."
+        initial = self.report([yellow_a], [])
+        response = self.client.post(
+            "/api/alert-state/mute", json={"alert": yellow_a, "level": "warning"}
+        )
+        self.assertEqual(response.status_code, 200)
+        with patch.object(stopwatch, "now_ms", return_value=initial["ts"]):
+            config = stopwatch._beep_config(stopwatch._default_state())
+        self.assertEqual(config["yellow_on"], 0)
+
+        updated = self.report([yellow_a_updated, yellow_b], [])
+        self.assertEqual(updated["yellow_muted"], ["Taster H: WLAN-Signal auffällig."])
+        self.assertEqual(updated["yellow_seq"], 2)
+        self.assertEqual(
+            self.client.post("/api/alert-state", json={
+                "yellow": [yellow_a_updated, yellow_b], "red": [],
+            }).get_json()["yellow_muted_texts"],
+            [yellow_a_updated],
+        )
+        with patch.object(stopwatch, "now_ms", return_value=updated["ts"]):
+            config = stopwatch._beep_config(stopwatch._default_state())
+        self.assertEqual(config["yellow_on"], 1)
+
+        self.report([], [])
+        again = self.report([yellow_a], [])
+        self.assertEqual(again["yellow_muted"], [])
+        self.assertEqual(again["yellow_seq"], 3)
+        with patch.object(stopwatch, "now_ms", return_value=again["ts"]):
+            config = stopwatch._beep_config(stopwatch._default_state())
+        self.assertEqual(config["yellow_on"], 1)
+
     def test_local_fault_mask_and_reject_stale_ack(self):
         temp = "Übertemperatur im Ladekoffer (44,2 °C)."
         mcp = "Ladeplatine: Baustein MCP23017 antwortet nicht, Ladestatus unsicher."

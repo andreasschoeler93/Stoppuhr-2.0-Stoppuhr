@@ -462,8 +462,8 @@ const CHARGER_STATE = {
 const CHARGER_LEVEL = { error: "danger", warn: "warning", info: "info", ok: "success" };
 
 function alertBannerHtml(level, text) {
-  const button = level === "danger"
-    ? '<button type="button" class="btn btn-sm btn-outline-danger ms-2 alert-mute">Stumm</button>'
+  const button = level === "danger" || level === "warning"
+    ? `<button type="button" class="btn btn-sm btn-outline-${level === "danger" ? "danger" : "dark"} ms-2 alert-mute">Stumm</button>`
     : "";
   return `<div class="alert alert-${level} py-1 px-2 small mb-2 d-flex align-items-center justify-content-between gap-2"><span class="alert-text">${escapeHtml(text)}</span>${button}</div>`;
 }
@@ -502,18 +502,20 @@ function alertTexts(level) {
     .map(el => el.querySelector(".alert-text").textContent.trim());
 }
 
-function updateMutedAlerts(mutedTexts) {
-  document.querySelectorAll("#chargerAlerts .alert-danger, #sensorAlerts .alert-danger").forEach(el => {
+function updateMutedAlerts(level, mutedTexts) {
+  document.querySelectorAll(`#chargerAlerts .alert-${level}, #sensorAlerts .alert-${level}`).forEach(el => {
     const button = el.querySelector(".alert-mute");
+    if (!button) return;
     const muted = mutedTexts.includes(el.querySelector(".alert-text").textContent.trim());
     button.disabled = muted;
-    button.textContent = muted ? "Quittiert" : "Stumm";
+    button.textContent = muted ? "Stummgeschaltet" : "Stumm";
   });
 }
 
 async function reportAlerts() {
   const result = await apiPost("/api/alert-state", { yellow: alertTexts("warning"), red: alertTexts("danger") });
-  updateMutedAlerts(result.muted_texts || []);
+  updateMutedAlerts("danger", result.muted_texts || []);
+  updateMutedAlerts("warning", result.yellow_muted_texts || []);
 }
 
 async function muteAlert(event) {
@@ -521,7 +523,12 @@ async function muteAlert(event) {
   if (!button) return;
   button.disabled = true;
   try {
-    await apiPost("/api/alert-state/mute", { alert: button.closest(".alert").querySelector(".alert-text").textContent.trim() });
+    const banner = button.closest(".alert");
+    const level = banner.classList.contains("alert-warning") ? "warning" : "danger";
+    await apiPost("/api/alert-state/mute", {
+      alert: banner.querySelector(".alert-text").textContent.trim(),
+      level,
+    });
     await reportAlerts();
   } catch (error) {
     button.disabled = false;

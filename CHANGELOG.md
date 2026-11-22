@@ -5,6 +5,7 @@ Jede Version ist als Git-Tag `vX.Y.Z` markiert und kann in der Weboberfläche un
 
 | Version | Datum | Änderung |
 |---|---|---|
+| v0.44.13 | 2026-11-22 | Gelbe und rote Dashboard-Meldungen lassen sich einzeln stummschalten; neue und wiederkehrende Meldungen werden erneut gemeldet. |
 | v0.44.12 | 2026-11-18 | Rote Meldungen im Dashboard einzeln stummschalten; eigene Kofferfehler erfordern Ladekoffer-Firmware v0.7.29. |
 | v0.44.11 | 2026-11-18 | Langzeit-Vitaldaten als Diagramme; stabilere Quittierung der Koffer-Pieptöne bei wechselnden Messwerten (Koffer-Firmware v0.7.28). |
 | v0.44.10 | 2026-11-18 | MAC-bezogenes Langzeitlog: Übernahme bestehender Vitaldaten beim Dienststart, alle 24 Stunden und beim Wettkampfende; Minutenmittel auch außerhalb des Wettkampfs als CSV. Keine automatische Löschung. |

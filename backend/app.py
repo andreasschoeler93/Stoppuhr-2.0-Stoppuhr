@@ -59,7 +59,7 @@ from werkzeug.exceptions import HTTPException
 from xml_writer import create_xml_heats
 
 
-APP_VERSION: Final[str] = "0.44.12"
+APP_VERSION: Final[str] = "0.44.13"
 DEFAULT_PORT: Final[int] = 1999  # Since JAuswertung expected this port
 EXIT_ERROR: Final[int] = 1
 STATE_KEY: Final[str] = "STATE"
@@ -1755,11 +1755,13 @@ def _beep_config(st: State) -> dict[str, Any]:
     # Meldet kein Dashboard mehr (Laptop zu), gibt es auch keine Meldungen
     fresh = now_ms() - int(state.get("ts") or 0) <= ALERT_STALE_MS
     settings = st.get("settings", {})
+    yellow_muted = set(state.get("yellow_muted") or [])
+    yellow_active = bool(set(state.get("yellow") or []) - yellow_muted)
     muted = set(state.get("red_muted") or [])
     local_mute = (1 if "Übertemperatur im Ladekoffer." in muted else 0)
     local_mute |= (2 if "Ladeplatine: Baustein MCP23017 antwortet nicht, Ladestatus unsicher." in muted else 0)
     return {
-        "yellow_on": 1 if fresh and settings.get("alert_beep_yellow", "1") == "1" else 0,
+        "yellow_on": 1 if fresh and yellow_active and settings.get("alert_beep_yellow", "1") == "1" else 0,
         "yellow_seq": int(state.get("yellow_seq") or 0),
         "red_on": 1 if fresh and state.get("red") and settings.get("alert_beep_red", "1") == "1" else 0,
         "red_seq": int(state.get("red_seq") or 0),
@@ -1792,17 +1794,27 @@ def api_post_alert_state() -> ResponseReturnValue:
             seq += 1
         if any(t not in (prev.get("red_alerts") or []) for t in red):
             red_seq += 1
-        muted = sorted(set(prev.get("red_muted") or []).intersection(red))
+        red_muted = sorted(set(prev.get("red_muted") or []).intersection(red))
+        yellow_muted = sorted(set(prev.get("yellow_muted") or []).intersection(yellow))
         redis_store.set(
             ALERT_STATE_KEY, json.dumps({
-                "ts": now_ms(), "yellow": yellow, "red": bool(set(red) - set(muted)),
-                "red_alerts": red, "red_muted": muted, "yellow_seq": seq, "red_seq": red_seq,
+                "ts": now_ms(), "yellow": yellow, "yellow_muted": yellow_muted,
+                "red": bool(set(red) - set(red_muted)),
+                "red_alerts": red, "red_muted": red_muted, "yellow_seq": seq, "red_seq": red_seq,
             })
         )
+    raw_yellow = payload.get("yellow")
     raw_red = payload.get("red")
+    yellow_muted_texts = [
+        text for text in (raw_yellow if isinstance(raw_yellow, list) else [])
+        if isinstance(text, str) and _alert_identity(text) in yellow_muted
+    ]
     muted_texts = [text for text in (raw_red if isinstance(raw_red, list) else []) if isinstance(text, str)
-                   and _alert_identity(text) in muted]
-    return jsonify({"ok": True, "muted": muted, "muted_texts": muted_texts})
+                   and _alert_identity(text) in red_muted]
+    return jsonify({
+        "ok": True, "muted": red_muted, "muted_texts": muted_texts,
+        "yellow_muted": yellow_muted, "yellow_muted_texts": yellow_muted_texts,
+    })
 
 
 @app.post("/api/alert-state/mute")
@@ -1811,18 +1823,25 @@ def api_mute_alert() -> ResponseReturnValue:
     text = payload.get("alert")
     if not isinstance(text, str) or not text:
         return jsonify({"ok": False, "error": "Ungültige Warnmeldung."}), 400
+    level = payload.get("level", "danger")
+    if level not in ("warning", "danger"):
+        return jsonify({"ok": False, "error": "Ungültige Warnstufe."}), 400
     identity = _alert_identity(text)
     with _ALERT_STATE_LOCK:
         state = _alert_state()
-        red = state.get("red_alerts") or []
-        if identity not in red or now_ms() - int(state.get("ts") or 0) > ALERT_STALE_MS:
+        alerts_key, muted_key = (
+            ("yellow", "yellow_muted") if level == "warning" else ("red_alerts", "red_muted")
+        )
+        alerts = state.get(alerts_key) or []
+        if identity not in alerts or now_ms() - int(state.get("ts") or 0) > ALERT_STALE_MS:
             return jsonify({"ok": False, "error": "Warnmeldung nicht mehr aktuell."}), 409
-        muted = set(state.get("red_muted") or [])
+        muted = set(state.get(muted_key) or [])
         muted.add(identity)
-        state["red_muted"] = sorted(muted)
-        state["red"] = bool(set(red) - muted)
+        state[muted_key] = sorted(muted)
+        if level == "danger":
+            state["red"] = bool(set(alerts) - muted)
         redis_store.set(ALERT_STATE_KEY, json.dumps(state))
-    return jsonify({"ok": True, "muted": state["red_muted"]})
+    return jsonify({"ok": True, "muted": state[muted_key]})
 
 
 @app.get("/api/charger")
