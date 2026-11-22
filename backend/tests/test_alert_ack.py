@@ -86,6 +86,29 @@ class AlertAckTests(unittest.TestCase):
         self.assertEqual(state["red_muted"], [])
         self.assertTrue(state["red"])
 
+    def test_visual_alerts_are_independent_of_sound_and_mute(self):
+        state = self.report(["Gelbe Meldung"], ["Rote Meldung"])
+        settings = stopwatch._default_state()
+        settings["settings"]["alert_beep_yellow"] = "0"
+        settings["settings"]["alert_beep_red"] = "0"
+        with patch.object(stopwatch, "now_ms", return_value=state["ts"]):
+            config = stopwatch._beep_config(settings)
+        self.assertEqual((config["yellow_on"], config["red_on"]), (0, 0))
+        self.assertEqual(config["visual_fresh"], 1)
+        self.assertEqual((config["visual_yellow_on"], config["visual_red_on"]), (1, 1))
+
+        self.client.post("/api/alert-state/mute", json={"alert": "Gelbe Meldung", "level": "warning"})
+        self.client.post("/api/alert-state/mute", json={"alert": "Rote Meldung"})
+        settings = stopwatch._default_state()
+        with patch.object(stopwatch, "now_ms", return_value=state["ts"]):
+            config = stopwatch._beep_config(settings)
+        self.assertEqual((config["yellow_on"], config["red_on"]), (0, 0))
+        self.assertEqual((config["visual_yellow_on"], config["visual_red_on"]), (1, 1))
+        with patch.object(stopwatch, "now_ms", return_value=state["ts"] + 30_001):
+            config = stopwatch._beep_config(settings)
+        self.assertEqual(config["visual_fresh"], 0)
+        self.assertEqual((config["visual_yellow_on"], config["visual_red_on"]), (0, 0))
+
     def test_mute_one_yellow_preserves_new_warnings_and_reappearance(self):
         yellow_a = "Taster H: WLAN-Signal auffällig (-76 dBm)."
         yellow_a_updated = "Taster H: WLAN-Signal auffällig (-75 dBm)."
