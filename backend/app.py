@@ -200,6 +200,21 @@ class State(TypedDict):
     triggers_per_run: dict[str, dict[str, PressEvent]]  # Maps run to lane to PressEvent
     charger_manual_wake: Optional[dict[str, Any]]
     charger_manual_wake_results: list[dict[str, Any]]
+    run_finished_ts: NotRequired[Optional[int]]
+    # Maps attempt key to adopted finish versions (legacy v0.13.2: a single dict)
+    finish_adopted: NotRequired[dict[str, Any]]
+    competition_since_ms: NotRequired[int]
+    finish_per_run: NotRequired[dict[str, list[dict[str, Any]]]]  # Maps attempt key to collected finish presses
+    finish_assign: NotRequired[dict[str, dict[str, int]]]  # Maps attempt key to lane to finish press index
+    finish_parked: NotRequired[dict[str, list[int]]]  # Maps attempt key to parked finish press indices
+    stopped_by_starter: NotRequired[list[str]]  # Attempt keys stopped by the starter
+    starter_stop_ts: NotRequired[dict[str, int]]  # Maps attempt key to starter stop timestamp
+    starter_stop_events: NotRequired[dict[str, dict[str, Any]]]  # Maps attempt key to starter stop press
+    run_done_event_ts: NotRequired[dict[str, int]]  # Maps attempt key to timestamp the run was done
+    start_deviation: NotRequired[dict[str, dict[str, int]]]  # Maps attempt key to lane to deviation in ms
+    prestart_presses: NotRequired[dict[str, dict[str, int]]]  # Maps attempt key to lane to press timestamp
+    deferred_presses: NotRequired[list[dict[str, Any]]]  # Presses waiting for their run to start
+    sleep_until: NotRequired[dict[str, int]]  # Maps taster MAC to sleep end timestamp
 
 
 def _default_state() -> State:
@@ -1011,18 +1026,18 @@ def api_end_competition() -> ResponseReturnValue:
     st["finish_parked"] = {}
     st["finish_adopted"] = {}
     st["stopped_by_starter"] = []
-    st["start_deviation"] = {}  # type: ignore[typeddict-unknown-key]
-    st["prestart_presses"] = {}  # type: ignore[typeddict-unknown-key]
-    st["deferred_presses"] = []  # type: ignore[typeddict-unknown-key]
-    st["starter_stop_ts"] = {}  # type: ignore[typeddict-unknown-key]
-    st["run_done_event_ts"] = {}  # type: ignore[typeddict-unknown-key]
+    st["start_deviation"] = {}
+    st["prestart_presses"] = {}
+    st["deferred_presses"] = []
+    st["starter_stop_ts"] = {}
+    st["run_done_event_ts"] = {}
     st["current_run"] = 1
     st["current_attempt"] = 1
     st["start_locked_until_ms"] = 0
     st["aborted_attempts"] = []
     st["abort_requests"] = {}
     st["starter_trigger_receipts"] = {}
-    st["starter_stop_events"] = {}  # type: ignore[typeddict-unknown-key]
+    st["starter_stop_events"] = {}
     st["unresolved_finish_presses"] = []
     st["unresolved_lane_presses"] = []
     st["reviewed_lane_presses"] = []
@@ -1513,7 +1528,7 @@ def api_post_charger():
             grace_s = max(1, _int_setting(st, "shutdown_grace_s", 10))
             sleeping = {
                 mac: until
-                for mac, until in (st.get("sleep_until") or {}).items()  # type: ignore[attr-defined]
+                for mac, until in (st.get("sleep_until") or {}).items()
                 if int(until) > now
             }
             targets = [
@@ -1524,7 +1539,7 @@ def api_post_charger():
             for mac in targets:
                 sleeping[mac] = now + grace_s * 1000
             if targets:
-                st["sleep_until"] = sleeping  # type: ignore[typeddict-unknown-key]
+                st["sleep_until"] = sleeping
                 save_state(st)
             reply["sleep_unassigned_ack"] = True
             reply["sleep_unassigned_count"] = len(targets)
@@ -2135,9 +2150,9 @@ def api_taster_sleep() -> ResponseReturnValue:
     except (TypeError, ValueError):
         grace_s = 10
     now = now_ms()
-    sleeping = {m: u for m, u in (st.get("sleep_until") or {}).items() if int(u) > now}  # type: ignore[attr-defined]
+    sleeping = {m: u for m, u in (st.get("sleep_until") or {}).items() if int(u) > now}
     sleeping[mac] = now + grace_s * 1000
-    st["sleep_until"] = sleeping  # type: ignore[typeddict-unknown-key]
+    st["sleep_until"] = sleeping
     save_state(st)
     logger.info("Taster %s wird schlafen geschickt", letter)
     return jsonify({"ok": True, "letter": letter, "grace_s": grace_s})
@@ -3148,7 +3163,7 @@ def _defer_press(
     if isinstance(trigger_id, str) and 0 < len(trigger_id) <= 64:
         item["trigger_id"] = trigger_id
     kept.append(item)
-    st["deferred_presses"] = kept  # type: ignore[typeddict-unknown-key]
+    st["deferred_presses"] = kept
 
 
 def _remember_starter_event(
@@ -3269,7 +3284,7 @@ def api_review_deferred() -> ResponseReturnValue:
         or index >= len(pending) or not isinstance(item, dict) or pending[index] != item
     ):
         return jsonify({"ok": False, "error": "Vormerkung hat sich geändert. Bitte neu prüfen."}), 409
-    st["deferred_presses"] = pending[:index] + pending[index + 1:]  # type: ignore[typeddict-unknown-key]
+    st["deferred_presses"] = pending[:index] + pending[index + 1:]
     return _review_lane_press(st, item, "deferred_manual_review")
 
 
@@ -3345,7 +3360,7 @@ def api_resolve_lane_review() -> ResponseReturnValue:
             expected = [n for n in lanes if mapping.get(n)] or lanes
             if expected and all(st["triggers_per_run"][run_key].get(n) for n in expected):
                 st["run_finished_ts"] = now_ms()
-                st.setdefault("run_done_event_ts", {})[run_key] = max(  # type: ignore[typeddict-unknown-key]
+                st.setdefault("run_done_event_ts", {})[run_key] = max(
                     int(p["ts"])
                     for lane_key, p in st["triggers_per_run"][run_key].items()
                     if lane_key != STARTER_KEY and p
@@ -3373,7 +3388,7 @@ def api_resolve_lane_review() -> ResponseReturnValue:
             collected = (st.get("finish_per_run") or {}).get(run_key) or []
             if needed and len(collected) >= needed:
                 st["run_finished_ts"] = now_ms()
-                st.setdefault("run_done_event_ts", {})[run_key] = max(  # type: ignore[typeddict-unknown-key]
+                st.setdefault("run_done_event_ts", {})[run_key] = max(
                     int(p["ts"]) for p in collected
                 )
                 completed = True
@@ -3404,7 +3419,7 @@ def _replay_deferred(st: State) -> None:
         if d not in remaining:
             continue
         remaining.remove(d)
-        st["deferred_presses"] = remaining  # type: ignore[typeddict-unknown-key]
+        st["deferred_presses"] = remaining
         replay_payload = {"mac": d["mac"], "ts": d["ts"]}
         if "trigger_id" in d:
             replay_payload["trigger_id"] = d["trigger_id"]
@@ -3538,7 +3553,7 @@ def _handle_trigger(st: State, payload: dict[str, Any], replay: bool = False):
             collected = (st.get("finish_per_run") or {}).get(current_key) or []
             if st.get("run_finished_ts") is None and needed and len(collected) >= needed:
                 st["run_finished_ts"] = now_ms()
-                st.setdefault("run_done_event_ts", {})[current_key] = max(  # type: ignore[typeddict-unknown-key]
+                st.setdefault("run_done_event_ts", {})[current_key] = max(
                     int(p["ts"]) for p in collected
                 )
             if finish_data.get("finish"):
@@ -3581,11 +3596,11 @@ def _handle_trigger(st: State, payload: dict[str, Any], replay: bool = False):
             stopped = set(st.get("stopped_by_starter") or [])
             stopped.add(current_key)
             st["stopped_by_starter"] = sorted(stopped)
-            st.setdefault("starter_stop_ts", {})[current_key] = ts_val  # type: ignore[typeddict-item]
-            st.setdefault("run_done_event_ts", {})[current_key] = ts_val  # type: ignore[typeddict-unknown-key]
+            st.setdefault("starter_stop_ts", {})[current_key] = ts_val
+            st.setdefault("run_done_event_ts", {})[current_key] = ts_val
             stop_response = {"ok": True, "stopped": True, "run_key": current_key}
             _remember_starter_event(st, payload, current_key, stop_response)
-            st.setdefault("starter_stop_events", {})[current_key] = {  # type: ignore[typeddict-unknown-key]
+            st.setdefault("starter_stop_events", {})[current_key] = {
                 "mac": mac_norm, "ts": ts_val, "trigger_id": payload.get("trigger_id"),
             }
             save_state(st)
@@ -3636,8 +3651,8 @@ def _handle_trigger(st: State, payload: dict[str, Any], replay: bool = False):
         stopped = set(st.get("stopped_by_starter") or [])
         stopped.add(current_key)
         st["stopped_by_starter"] = sorted(stopped)
-        st.setdefault("starter_stop_ts", {})[current_key] = ts_val  # type: ignore[typeddict-item]
-        st.setdefault("run_done_event_ts", {})[current_key] = ts_val  # type: ignore[typeddict-unknown-key]
+        st.setdefault("starter_stop_ts", {})[current_key] = ts_val
+        st.setdefault("run_done_event_ts", {})[current_key] = ts_val
         st["run_finished_ts"] = now_ms()
         # Bahn-Stopps nach dem Lauf-Ende (nach Pi-Ausfall vor dem Starter-Stopp eingetroffen)
         # gehoeren zum naechsten Lauf
@@ -3652,7 +3667,7 @@ def _handle_trigger(st: State, payload: dict[str, Any], replay: bool = False):
         st["triggers_per_run"] = triggers_per_run
         stop_response = {"ok": True, "stopped": True, "run_key": current_key}
         _remember_starter_event(st, payload, current_key, stop_response)
-        st.setdefault("starter_stop_events", {})[current_key] = {  # type: ignore[typeddict-unknown-key]
+        st.setdefault("starter_stop_events", {})[current_key] = {
             "mac": mac_norm, "ts": ts_val, "trigger_id": payload.get("trigger_id"),
         }
         save_state(st)
@@ -3671,7 +3686,7 @@ def _handle_trigger(st: State, payload: dict[str, Any], replay: bool = False):
                 _defer_press(st, mac_norm, int(payload["ts"]), payload.get("trigger_id"))
                 save_state(st)
                 return jsonify({"ok": True, "deferred": True, "reason": "run_not_started"})
-            pre = st.setdefault("prestart_presses", {}).setdefault(current_key, {})  # type: ignore[typeddict-item]
+            pre = st.setdefault("prestart_presses", {}).setdefault(current_key, {})
             pre[lane] = ts_val
             save_state(st)
         return jsonify({"ok": False, "error": "Run has not started yet."}), 400
@@ -3688,7 +3703,7 @@ def _handle_trigger(st: State, payload: dict[str, Any], replay: bool = False):
         lockout_ms = _stop_lockout_ms(st)
         if starter_press and ts_val < int(starter_press["ts"]):
             if ts_val >= int(starter_press["ts"]) - START_DEVIATION_WINDOW_MS:
-                dev = st.setdefault("start_deviation", {}).setdefault(current_key, {})  # type: ignore[typeddict-item]
+                dev = st.setdefault("start_deviation", {}).setdefault(current_key, {})
                 dev.setdefault(lane, ts_val - int(starter_press["ts"]))
                 if not (isinstance(payload.get("mac"), str)
                         and isinstance(payload.get("trigger_id"), str)
@@ -3708,7 +3723,7 @@ def _handle_trigger(st: State, payload: dict[str, Any], replay: bool = False):
         if starter_press and ts_val - int(starter_press["ts"]) < lockout_ms:
             logger.info(f"Stop signal of lane {lane} ignored (lockout {lockout_ms} ms)")
             if lane in lanes_in_run:
-                dev = st.setdefault("start_deviation", {}).setdefault(current_key, {})  # type: ignore[typeddict-item]
+                dev = st.setdefault("start_deviation", {}).setdefault(current_key, {})
                 dev.setdefault(lane, ts_val - int(starter_press["ts"]))
                 if not (isinstance(payload.get("mac"), str)
                         and isinstance(payload.get("trigger_id"), str)
@@ -3741,10 +3756,10 @@ def _handle_trigger(st: State, payload: dict[str, Any], replay: bool = False):
     st["triggers_per_run"] = triggers_per_run
     if lane == STARTER_KEY:
         # Bahntaster, die kurz vor dem Start gedrueckt wurden: negative Abweichung
-        pre = (st.get("prestart_presses") or {}).pop(current_key, None) or {}  # type: ignore[typeddict-item]
+        pre = (st.get("prestart_presses") or {}).pop(current_key, None) or {}
         for pre_lane, pre_ts in pre.items():
             if 0 < ts_val - int(pre_ts) <= START_DEVIATION_WINDOW_MS:
-                dev = st.setdefault("start_deviation", {}).setdefault(current_key, {})  # type: ignore[typeddict-item]
+                dev = st.setdefault("start_deviation", {}).setdefault(current_key, {})
                 dev.setdefault(pre_lane, int(pre_ts) - ts_val)
         if st.get("deferred_presses"):
             st["replay_pending_run"] = current_key
@@ -3760,7 +3775,7 @@ def _handle_trigger(st: State, payload: dict[str, Any], replay: bool = False):
         logger.info(f"All lanes have been pressed in run {current_key}")
         # Nach der eingestellten Wartezeit in den naechsten Lauf wechseln
         st["run_finished_ts"] = now_ms()
-        st.setdefault("run_done_event_ts", {})[current_key] = max(  # type: ignore[typeddict-unknown-key]
+        st.setdefault("run_done_event_ts", {})[current_key] = max(
             int(p["ts"])
             for lane_key, p in triggers_per_run[current_key].items()
             if lane_key != STARTER_KEY and p
@@ -3997,7 +4012,7 @@ def api_get_display():
     out: dict[str, Any] = {
         "role": "none",
         "shutdown": now < int(st.get("shutdown_until_ms", 0) or 0)
-        or now < int((st.get("sleep_until") or {}).get(mac, 0) or 0),  # type: ignore[attr-defined]
+        or now < int((st.get("sleep_until") or {}).get(mac, 0) or 0),
         "low_battery_pct": _int_setting(st, "low_battery_pct", 10),
         "low_battery_min": _int_setting(st, "low_battery_min", 5),
         "battery_zero_mv": _int_setting(st, "battery_zero_mv", 3300),
@@ -4157,7 +4172,7 @@ def api_get_run_status():
             "times_ms": times,
             "running": starter_ts is not None and run_key == current_key and st.get("run_finished_ts") is None,
             "stopped_by_starter": run_key in stopped_keys,
-            "start_deviation": (st.get("start_deviation") or {}).get(run_key) or {},  # type: ignore[call-overload]
+            "start_deviation": (st.get("start_deviation") or {}).get(run_key) or {},
             "finish": _finish_info(st, run_key),
             "adopted": [
                 {"label": _attempt_key(_parse_attempt_key(run_key)[0], v["attempt"]), "lanes": v["lanes"]}
@@ -4354,8 +4369,8 @@ def api_test_reset_run():
     (st.get("finish_assign") or {}).pop(run_key, None)
     (st.get("finish_parked") or {}).pop(run_key, None)
     (st.get("finish_adopted") or {}).pop(run_key, None)
-    (st.get("start_deviation") or {}).pop(run_key, None)  # type: ignore[call-overload]
-    (st.get("prestart_presses") or {}).pop(run_key, None)  # type: ignore[call-overload]
+    (st.get("start_deviation") or {}).pop(run_key, None)
+    (st.get("prestart_presses") or {}).pop(run_key, None)
     st["stopped_by_starter"] = [k for k in (st.get("stopped_by_starter") or []) if k != run_key]
     st["run_finished_ts"] = None
     save_state(st)
