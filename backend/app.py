@@ -130,7 +130,7 @@ class Vital(TypedDict):
     wv: Optional[int]
     clock_synced: bool
     clock_sync_age_ms: Optional[int]
-    online_since: Optional[int]
+    online_since: NotRequired[int]
     trigger_rejected: NotRequired[bool]
     trigger_rejection_seen: NotRequired[bool]
 
