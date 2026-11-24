@@ -2936,7 +2936,7 @@ def api_resolve_finish() -> ResponseReturnValue:
             ), 409
         return jsonify({"ok": False, "error": "Zieleinlaufdruck nicht gefunden."}), 404
     if action == "park":
-        if len(note) > 500:
+        if note is not None and len(note) > 500:
             return jsonify({"ok": False, "error": "Begruendung ist zu lang."}), 400
         st["unresolved_finish_presses"] = [p for p in pending if p["id"] != item["id"]]
         receipt = {
