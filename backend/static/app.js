@@ -63,6 +63,7 @@ function toggleSeries(label) {
   if (!hiddenSeries.delete(label)) hiddenSeries.add(label);
   localStorage.setItem("vitalsHidden", JSON.stringify([...hiddenSeries]));
   drawVitals();
+  drawLongtermVitals();
 }
 const TASTER_COLORS = ["#0d6efd", "#dc3545", "#198754", "#fd7e14", "#6f42c1", "#0dcaf0", "#d63384", "#795548", "#6c757d", "#20c997"];
 
@@ -162,7 +163,15 @@ async function refreshVitals() {
 
 let longtermData = null;
 let longtermRequest = 0;
-let longtermRequestedMac = null;
+let longtermMacs = [];
+let longtermRequestedMacs = null;
+
+function updateLongtermDownload() {
+  const mac = byId("longtermMac").value;
+  byId("longtermDownload").href = mac
+    ? `/api/vitals/longterm/${encodeURIComponent(mac)}`
+    : "";
+}
 
 function localDateValue(date) {
   const pad = n => String(n).padStart(2, "0");
@@ -178,16 +187,19 @@ async function refreshLongtermVitals() {
     const options = data.macs.map(mac => `<option value="${escapeHtml(mac)}">${escapeHtml(mac)}</option>`).join("");
     if (select.innerHTML !== options) select.innerHTML = options;
     if (data.macs.includes(previous)) select.value = previous;
+    longtermMacs = data.macs;
+    updateLongtermDownload();
     select.disabled = !data.macs.length;
     byId("longtermShow").disabled = !data.macs.length;
     byId("longtermDownload").classList.toggle("d-none", !data.macs.length);
     if (!data.macs.length) {
       longtermRequest++;
       longtermData = null;
-      longtermRequestedMac = null;
+      longtermRequestedMacs = null;
       byId("longtermCharts").innerHTML = "";
+      byId("longtermInfo").innerHTML = "";
       box.textContent = "Noch keine Langzeitdaten vorhanden.";
-    } else if (longtermRequestedMac !== select.value) {
+    } else if (longtermRequestedMacs !== JSON.stringify(data.macs)) {
       await showLongtermVitals();
     }
   } catch (error) {
@@ -198,13 +210,14 @@ async function refreshLongtermVitals() {
 }
 
 async function showLongtermVitals() {
-  const mac = byId("longtermMac").value;
+  const macs = longtermMacs.length ? longtermMacs : [byId("longtermMac").value].filter(Boolean);
   const box = byId("longtermVitals");
   const revision = ++longtermRequest;
-  longtermRequestedMac = mac;
+  longtermRequestedMacs = JSON.stringify(macs);
   longtermData = null;
   byId("longtermCharts").innerHTML = "";
-  byId("longtermDownload").href = `/api/vitals/longterm/${encodeURIComponent(mac)}`;
+  byId("longtermInfo").innerHTML = "";
+  updateLongtermDownload();
   const from = byId("longtermFrom").value, to = byId("longtermTo").value;
   const start = new Date(`${from}T00:00:00`), end = new Date(`${to}T00:00:00`);
   end.setDate(end.getDate() + 1);
@@ -218,13 +231,20 @@ async function showLongtermVitals() {
   box.className = "text-muted small";
   box.textContent = "Langzeitdaten werden geladen …";
   try {
-    const data = await apiGet(`/api/vitals/longterm/${encodeURIComponent(mac)}/points?from=${t0}&to=${t1}`);
+    const series = await Promise.all(macs.map(async (mac, i) => {
+      const data = await apiGet(`/api/vitals/longterm/${encodeURIComponent(mac)}/points?from=${t0}&to=${t1}`);
+      return {
+        label: mac,
+        color: TASTER_COLORS[i % TASTER_COLORS.length],
+        points: data.points.map(p => [p.ts, ...data.fields.map(f => p[f] ?? null)]),
+      };
+    }));
     if (revision !== longtermRequest) return;
-    const points = data.points.map(p => [p.ts, ...data.fields.map(f => p[f] ?? null)]);
-    longtermData = { mac, t0, t1, points };
+    longtermData = { macs, t0, t1, series };
     box.className = "text-muted small";
-    box.textContent = points.length
-      ? `${points.length} Minutenwerte. Zeiten in lokaler Zeitzone; Lücken bedeuten fehlende Messungen.`
+    const pointCount = series.reduce((count, item) => count + item.points.length, 0);
+    box.textContent = pointCount
+      ? `${macs.length} Taster, ${pointCount} Minutenwerte. Zeiten in lokaler Zeitzone.`
       : "Für diesen Zeitraum sind keine Langzeitdaten vorhanden.";
     drawLongtermVitals();
   } catch (error) {
@@ -237,11 +257,28 @@ async function showLongtermVitals() {
 function drawLongtermVitals() {
   if (!longtermData) return;
   const box = byId("longtermCharts");
-  if (!longtermData.points.length) { box.innerHTML = ""; return; }
+  const legend = byId("longtermInfo");
+  const series = longtermData.series;
+  if (!series.some(s => s.points.length)) {
+    box.innerHTML = "";
+    legend.innerHTML = "";
+    return;
+  }
+  legend.innerHTML = series.map(s => `<span class="me-3 vitals-legend" role="button"
+    data-series="${escapeHtml(s.label)}" title="Klicken zum Ein-/Ausblenden"
+    style="cursor:pointer;user-select:none;${hiddenSeries.has(s.label) ? "opacity:.4;text-decoration:line-through;" : ""}">
+    <span style="display:inline-block;width:12px;height:12px;border-radius:2px;background:${s.color};vertical-align:-1px"></span>
+    ${escapeHtml(s.label)}</span>`).join("");
+  if (!legend.dataset.bound) {
+    legend.dataset.bound = "1";
+    legend.addEventListener("click", e => {
+      const el = e.target.closest("[data-series]");
+      if (el) toggleSeries(el.dataset.series);
+    });
+  }
   box.innerHTML = VITAL_CHARTS.map(c => `<div class="col-lg-6"><div class="card"><div class="card-body p-2">
     <strong class="small">${c.title} (${c.unit})</strong>
     <canvas id="longterm-vc-${c.idx}" style="width:100%;height:180px"></canvas></div></div></div>`).join("");
-  const series = [{ label: longtermData.mac, color: "#0d6efd", points: longtermData.points }];
   VITAL_CHARTS.forEach(c => drawVitalChart(c, series, {
     canvasId: "longterm-vc-" + c.idx, t0: longtermData.t0, t1: longtermData.t1, longterm: true,
   }));
@@ -818,10 +855,11 @@ function drawVitalChart(c, series, options = {}) {
   const cols = c.idx2 ? [[c.idx, false], [c.idx2, true]] : [[c.idx, false]];
   const t1 = options.t1 ?? vitalsData.t1 ?? Date.now();
   const t0 = options.t0 ?? t1 - vitalsData.hours * 3600 * 1000;
-  const shown = list => options.longterm ? list : list.filter(s => !hiddenSeries.has(s.label));
+  const shown = list => list.filter(s => !hiddenSeries.has(s.label));
   const lines = cols.flatMap(([ci, dash]) => shown(!options.longterm && (ci === 3 || ci === 4) ? series.concat(chargerSeries) : series).map(s => ({
     dash, color: s.color,
-    data: s.points.filter(p => (options.longterm || c.id === "charger-current" || p[ci] !== null) && p[0] >= t0 && p[0] <= t1).map(p => [p[0], p[ci] ?? null]),
+    data: s.points.filter(p => (options.longterm ? p[ci] !== null && p[ci] !== undefined : c.id === "charger-current" || p[ci] !== null)
+      && p[0] >= t0 && p[0] <= t1).map(p => [p[0], p[ci] ?? null]),
   })));
   const all = lines.flatMap(l => l.data.map(d => d[1]).filter(v => v !== null));
   if (!all.length) {
@@ -882,12 +920,9 @@ function drawVitalChart(c, series, options = {}) {
     let prev = null;
     l.data.forEach(([t, v]) => {
       if (v === null) { prev = null; return; }
-      // Luecke ueber 2 Minuten (Taster aus): Linie unterbrechen
-      const gap = prev === null || t - prev > (options.longterm ? 60000 : 120000);
+      // Langzeitkurven verbinden fehlende Minuten; Live-Kurven bleiben bei längeren Ausfällen unterbrochen.
+      const gap = prev === null || (!options.longterm && t - prev > 120000);
       if (gap) g.moveTo(x(t), y(v)); else g.lineTo(x(t), y(v));
-      if (options.longterm && gap) {
-        g.moveTo(x(t) - 1, y(v)); g.lineTo(x(t) + 1, y(v));
-      }
       prev = t;
     });
     g.stroke();
@@ -2881,7 +2916,7 @@ async function init() {
   longtermStart.setDate(longtermStart.getDate() - 6);
   byId("longtermFrom").value = localDateValue(longtermStart);
   byId("longtermTo").value = localDateValue(longtermEnd);
-  byId("longtermMac").addEventListener("change", showLongtermVitals);
+  byId("longtermMac").addEventListener("change", updateLongtermDownload);
   byId("longtermShow").addEventListener("click", showLongtermVitals);
   byId("archive-tab").addEventListener("shown.bs.tab", () => refreshArchive().catch(e => { byId("archiveList").textContent = "Fehler: " + e.message; }));
   window.addEventListener("resize", () => { if (vitalsData) drawVitals(); drawLongtermVitals(); });
