@@ -5,6 +5,7 @@ Jede Version ist als Git-Tag `vX.Y.Z` markiert und kann in der Weboberfläche un
 
 | Version | Datum | Änderung |
 |---|---|---|
+| v0.44.15 | 2026-11-26 | Langzeitlog zeigt alle Taster gemeinsam; Kurven lassen sich per MAC ein- und ausblenden und verbinden fehlende Messzeitpunkte, um Trends sichtbar zu machen. |
 | v0.44.14 | 2026-11-22 | Dashboard-Meldungen getrennt von den Toneinstellungen für die kurzzeitige optische Anzeige an den Ladekoffer übermitteln (Koffer-Firmware ab v0.7.31). |
 | v0.44.13 | 2026-11-22 | Gelbe und rote Dashboard-Meldungen lassen sich einzeln stummschalten; neue und wiederkehrende Meldungen werden erneut gemeldet. |
 | v0.44.12 | 2026-11-18 | Rote Meldungen im Dashboard einzeln stummschalten; eigene Kofferfehler erfordern Ladekoffer-Firmware v0.7.29. |
